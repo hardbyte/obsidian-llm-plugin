@@ -81,6 +81,8 @@
 .llm-message-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 8px;
   font-size: 0.8em;
   color: var(--text-muted);
   margin-bottom: 5px;
@@ -92,8 +94,12 @@
 }
 
 .llm-message-content {
-  white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+/* User messages preserve whitespace */
+.llm-message-user .llm-message-content {
+  white-space: pre-wrap;
 }
 
 .llm-message-content code {
@@ -429,6 +435,41 @@
 .llm-message-time {
   font-size: 0.75em;
   opacity: 0.6;
+}
+
+/* Message action buttons */
+.llm-message-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.llm-message:hover .llm-message-actions {
+  opacity: 1;
+}
+
+.llm-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  color: var(--text-muted);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.llm-action-btn:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+.llm-action-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .llm-chat-view .llm-empty-state {

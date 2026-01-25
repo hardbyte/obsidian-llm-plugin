@@ -9,7 +9,8 @@ An Obsidian plugin that integrates with LLM CLI tools (Claude, Codex, OpenCode, 
 - **Open Files Context** - Optionally include content from open notes as context
 - **System Prompt from File** - Use a markdown file in your vault as the system prompt
 - **Progress Indicators** - See what the LLM is doing (reading files, searching, etc.)
-- **Markdown Rendering** - LLM responses rendered with full Obsidian markdown support
+- **Markdown Rendering** - LLM responses rendered with full Obsidian markdown support, including internal links
+- **Create Notes from Responses** - Save LLM responses as new notes in your vault
 - **Quick Prompts** - Commands for summarizing, explaining, and improving selected text
 
 ## Requirements
@@ -48,6 +49,11 @@ Copy `main.js`, `manifest.json`, and `styles.css` to your vault's plugins folder
 2. The chat panel opens in the right sidebar
 3. Type your message and press Enter to send (Shift+Enter for newlines)
 4. Toggle "Include open files" to provide context from your workspace
+
+**Message Actions:**
+- Hover over any assistant message to reveal action buttons
+- **Copy** - Copy the response to clipboard
+- **Create Note** - Save the response as a new note in your vault
 
 ### Quick Commands
 
@@ -91,6 +97,17 @@ npm run dev
 # Build for production
 npm run build
 ```
+
+### Testing in Obsidian
+
+1. Create a test vault or use an existing one
+2. Create a symbolic link from the build output to your vault's plugins folder:
+   ```bash
+   ln -s /path/to/obsidian-llm /path/to/vault/.obsidian/plugins/obsidian-llm
+   ```
+3. Run `npm run dev` to watch for changes
+4. In Obsidian, enable the plugin and use Cmd/Ctrl+R to reload after changes
+5. Open the Developer Console (Cmd/Ctrl+Shift+I) to see logs and errors
 
 ## License
 

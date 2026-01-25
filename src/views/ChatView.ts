@@ -127,7 +127,7 @@ export class ChatView extends ItemView {
     this.renderMessagesContent();
   }
 
-  private renderMessagesContent() {
+  private async renderMessagesContent() {
     if (!this.messagesContainer) return;
 
     // Clean up old markdown components
@@ -148,8 +148,12 @@ export class ChatView extends ItemView {
       return;
     }
 
-    this.messages.forEach((msg) => {
-      const msgEl = this.messagesContainer!.createDiv({
+    // Get source path for link resolution (use active file if available)
+    const activeFile = this.app.workspace.getActiveFile();
+    const sourcePath = activeFile?.path ?? "";
+
+    for (const msg of this.messages) {
+      const msgEl = this.messagesContainer.createDiv({
         cls: `llm-message llm-message-${msg.role}`,
       });
 
@@ -163,6 +167,30 @@ export class ChatView extends ItemView {
         cls: "llm-message-time",
       });
 
+      // Add action buttons for assistant messages
+      if (msg.role === "assistant") {
+        const actionsEl = headerEl.createDiv({ cls: "llm-message-actions" });
+
+        // Copy button
+        const copyBtn = actionsEl.createEl("button", {
+          cls: "llm-action-btn",
+          attr: { "aria-label": "Copy to clipboard" },
+        });
+        setIcon(copyBtn, "copy");
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(msg.content);
+          new Notice("Copied to clipboard");
+        });
+
+        // Create note button
+        const createNoteBtn = actionsEl.createEl("button", {
+          cls: "llm-action-btn",
+          attr: { "aria-label": "Create note from response" },
+        });
+        setIcon(createNoteBtn, "file-plus");
+        createNoteBtn.addEventListener("click", () => this.createNoteFromMessage(msg));
+      }
+
       const contentEl = msgEl.createDiv({ cls: "llm-message-content" });
 
       if (msg.role === "assistant") {
@@ -170,18 +198,18 @@ export class ChatView extends ItemView {
         const component = new Component();
         component.load();
         this.markdownComponents.push(component);
-        MarkdownRenderer.render(
+        await MarkdownRenderer.render(
           this.app,
           msg.content,
           contentEl,
-          "",
+          sourcePath,
           component
         );
       } else {
         // User messages as plain text
         contentEl.setText(msg.content);
       }
-    });
+    }
 
     // Scroll to bottom
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
@@ -496,7 +524,7 @@ export class ChatView extends ItemView {
     }
   }
 
-  private updateStreamingMessage(content: string) {
+  private async updateStreamingMessage(content: string) {
     if (!this.messagesContainer) return;
 
     let streamingEl = this.messagesContainer.querySelector(
@@ -523,9 +551,25 @@ export class ChatView extends ItemView {
       streamingEl.createDiv({ cls: "llm-message-content" });
     }
 
-    const contentEl = streamingEl.querySelector(".llm-message-content");
+    const contentEl = streamingEl.querySelector(".llm-message-content") as HTMLElement;
     if (contentEl) {
-      contentEl.setText(content);
+      // Clear and render markdown
+      contentEl.empty();
+      const activeFile = this.app.workspace.getActiveFile();
+      const sourcePath = activeFile?.path ?? "";
+
+      // Use a temporary component for streaming renders
+      const component = new Component();
+      component.load();
+      await MarkdownRenderer.render(
+        this.app,
+        content,
+        contentEl,
+        sourcePath,
+        component
+      );
+      // Don't track this component - it gets replaced on each update
+      component.unload();
     }
 
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
@@ -545,5 +589,43 @@ export class ChatView extends ItemView {
     const errorEl = this.messagesContainer.createDiv({ cls: "llm-error-message" });
     errorEl.setText(`Error: ${message}`);
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  /**
+   * Create a new note from an LLM response
+   */
+  private async createNoteFromMessage(msg: ConversationMessage) {
+    // Generate a title from the first line or first few words
+    const firstLine = msg.content.split("\n")[0];
+    let title = firstLine
+      .replace(/^#+\s*/, "") // Remove markdown headers
+      .replace(/[\\/*?"<>|:]/g, "") // Remove invalid filename chars
+      .trim();
+
+    if (title.length > 50) {
+      title = title.slice(0, 47) + "...";
+    }
+    if (!title) {
+      title = `LLM Response ${new Date(msg.timestamp).toLocaleDateString()}`;
+    }
+
+    // Find a unique filename
+    let fileName = `${title}.md`;
+    let counter = 1;
+    while (this.app.vault.getAbstractFileByPath(fileName)) {
+      fileName = `${title} ${counter}.md`;
+      counter++;
+    }
+
+    try {
+      const file = await this.app.vault.create(fileName, msg.content);
+      new Notice(`Created note: ${file.path}`);
+
+      // Open the new file
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file);
+    } catch (error) {
+      new Notice(`Failed to create note: ${error}`);
+    }
   }
 }
