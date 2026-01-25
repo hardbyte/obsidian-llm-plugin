@@ -293,6 +293,85 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * Get today's daily note content if the Daily Notes plugin is enabled
+   */
+  private async getDailyNoteContext(): Promise<string> {
+    // Check if daily-notes core plugin is enabled
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internalPlugins = (this.app as any).internalPlugins;
+    const dailyNotesPlugin = internalPlugins?.plugins?.["daily-notes"];
+
+    if (!dailyNotesPlugin?.enabled) {
+      return "";
+    }
+
+    // Get daily notes settings
+    const settings = dailyNotesPlugin.instance?.options || {};
+    const folder = settings.folder || "";
+    const format = settings.format || "YYYY-MM-DD";
+
+    // Format today's date according to the configured format
+    const today = new Date();
+    const dateStr = this.formatDate(today, format);
+
+    // Build the path to today's daily note
+    const fileName = `${dateStr}.md`;
+    const filePath = folder ? `${folder}/${fileName}` : fileName;
+
+    // Try to find and read the file
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) {
+      // Daily note doesn't exist yet for today
+      return "";
+    }
+
+    try {
+      const content = await this.app.vault.cachedRead(file);
+      // Truncate if too large
+      const truncatedContent =
+        content.length > 4000
+          ? content.slice(0, 4000) + "\n... (truncated)"
+          : content;
+
+      return `=== Today's Daily Note (${filePath}) ===\n${truncatedContent}\n=== End Daily Note ===\n`;
+    } catch {
+      return "";
+    }
+  }
+
+  /**
+   * Format a date according to a moment.js-style format string
+   * Supports common tokens: YYYY, YY, MM, M, DD, D, ddd, dddd
+   */
+  private formatDate(date: Date, format: string): string {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const dayOfWeek = date.getDay();
+
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const dayNamesShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"];
+    const monthNamesShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const quarterNum = Math.ceil(month / 3);
+
+    return format
+      .replace(/YYYY/g, String(year))
+      .replace(/YY/g, String(year).slice(-2))
+      .replace(/MMMM/g, monthNames[month - 1])
+      .replace(/MMM/g, monthNamesShort[month - 1])
+      .replace(/MM/g, String(month).padStart(2, "0"))
+      .replace(/M/g, String(month))
+      .replace(/DD/g, String(day).padStart(2, "0"))
+      .replace(/D/g, String(day))
+      .replace(/dddd/g, dayNames[dayOfWeek])
+      .replace(/ddd/g, dayNamesShort[dayOfWeek])
+      .replace(/Q/g, String(quarterNum));
+  }
+
+  /**
    * Read the system prompt from the configured file
    */
   private async getSystemPrompt(): Promise<string> {
@@ -351,11 +430,16 @@ export class ChatView extends ItemView {
         this.handleProgressEvent(event);
       };
 
+      // Get vault path to use as working directory
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
+
       const response = await this.executor.execute(
         contextPrompt,
         this.currentProvider,
         this.plugin.settings.streamOutput ? onStream : undefined,
-        onProgress
+        onProgress,
+        vaultPath
       );
 
       if (response.error) {
@@ -459,12 +543,25 @@ export class ChatView extends ItemView {
     const systemPrompt = await this.getSystemPrompt();
     const includeContext = this.includeContextToggle?.checked ?? false;
     const openFilesContext = includeContext ? this.getOpenFilesContext() : "";
+    const dailyNoteContext = includeContext ? await this.getDailyNoteContext() : "";
 
     const contextParts: string[] = [];
 
     // Add system prompt if set
     if (systemPrompt) {
       contextParts.push(`System: ${systemPrompt}`);
+    }
+
+    // Add vault path context
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vaultPath = (this.app.vault.adapter as any).basePath;
+    if (vaultPath) {
+      contextParts.push(`Obsidian Vault Path: ${vaultPath}`);
+    }
+
+    // Add today's daily note context
+    if (dailyNoteContext) {
+      contextParts.push(dailyNoteContext);
     }
 
     // Add open files context

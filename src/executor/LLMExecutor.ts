@@ -222,6 +222,15 @@ export class LLMExecutor {
   }
 
   /**
+   * Log a debug message if debug mode is enabled
+   */
+  private debug(message: string, ...args: unknown[]): void {
+    if (this.settings.debugMode) {
+      console.log(`[LLM Plugin] ${message}`, ...args);
+    }
+  }
+
+  /**
    * Update settings (called when settings change)
    */
   updateSettings(settings: LLMPluginSettings): void {
@@ -230,12 +239,18 @@ export class LLMExecutor {
 
   /**
    * Execute a prompt with the specified provider
+   * @param prompt The prompt to send
+   * @param provider The provider to use (defaults to settings.defaultProvider)
+   * @param onStream Callback for streaming text updates
+   * @param onProgress Callback for progress events
+   * @param cwd Working directory for the CLI process (e.g., vault path)
    */
   async execute(
     prompt: string,
     provider?: LLMProvider,
     onStream?: StreamCallback,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    cwd?: string
   ): Promise<LLMResponse> {
     const selectedProvider = provider || this.settings.defaultProvider;
     const providerConfig = this.settings.providers[selectedProvider];
@@ -257,7 +272,8 @@ export class LLMExecutor {
         providerConfig,
         prompt,
         onStream,
-        onProgress
+        onProgress,
+        cwd
       );
       const durationMs = Date.now() - startTime;
 
@@ -299,7 +315,8 @@ export class LLMExecutor {
     config: ProviderConfig,
     prompt: string,
     onStream?: StreamCallback,
-    onProgress?: ProgressCallback
+    onProgress?: ProgressCallback,
+    cwd?: string
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const command = this.buildCommand(provider, config);
@@ -313,7 +330,16 @@ export class LLMExecutor {
         args.push(prompt);
       }
 
+      const timeoutSeconds = config.timeout ?? this.settings.defaultTimeout;
+
+      this.debug("Executing command:", cmd, args.join(" "));
+      this.debug("Working directory:", cwd || "(default)");
+      this.debug("Timeout:", timeoutSeconds, "seconds");
+      this.debug("Prompt length:", prompt.length, "chars");
+      this.debug("Allow file writes:", this.settings.allowFileWrites);
+
       const child = spawn(cmd, args, {
+        cwd: cwd || undefined,
         env: {
           ...process.env,
           ...config.envVars,
@@ -331,6 +357,7 @@ export class LLMExecutor {
       child.stdout?.on("data", (data: Buffer) => {
         const chunk = data.toString();
         stdout += chunk;
+        this.debug("stdout chunk:", chunk.slice(0, 200) + (chunk.length > 200 ? "..." : ""));
 
         // Parse streaming events
         const events = this.parseStreamingEvents(provider, chunk);
@@ -347,16 +374,23 @@ export class LLMExecutor {
       });
 
       child.stderr?.on("data", (data: Buffer) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        stderr += chunk;
+        this.debug("stderr:", chunk);
       });
 
       child.on("error", (error) => {
         this.activeProcess = null;
+        this.debug("Process error:", error.message);
         reject(new Error(`Failed to spawn ${cmd}: ${error.message}`));
       });
 
       child.on("close", (code) => {
         this.activeProcess = null;
+        this.debug("Process closed with code:", code);
+        this.debug("Total stdout length:", stdout.length);
+        this.debug("Total stderr length:", stderr.length);
+
         if (code === 0) {
           resolve(stdout);
         } else if (code === null) {
@@ -371,12 +405,14 @@ export class LLMExecutor {
       });
 
       // Set up timeout (use provider-specific or fall back to default)
-      const timeoutSeconds = config.timeout ?? this.settings.defaultTimeout;
       const timeoutMs = timeoutSeconds * 1000;
       const timeout = setTimeout(() => {
         if (this.activeProcess === child) {
+          this.debug("TIMEOUT! Killing process after", timeoutSeconds, "seconds");
+          this.debug("Stdout so far:", stdout.slice(-500));
+          this.debug("Stderr so far:", stderr);
           child.kill("SIGTERM");
-          reject(new Error(`Timeout after ${timeoutSeconds} seconds`));
+          reject(new Error(`Timeout after ${timeoutSeconds} seconds. Enable debug mode and check console for details.`));
         }
       }, timeoutMs);
 
@@ -403,6 +439,13 @@ export class LLMExecutor {
     }
 
     const defaultCmd = [...DEFAULT_COMMANDS[provider]];
+
+    // Add permission flags based on settings
+    if (provider === "claude" && this.settings.allowFileWrites) {
+      // Skip interactive permission prompts since we can't respond to them
+      defaultCmd.push("--dangerously-skip-permissions");
+    }
+
     if (config.additionalArgs) {
       defaultCmd.push(...config.additionalArgs);
     }

@@ -176,6 +176,31 @@ export class LLMSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    // Advanced settings
+    containerEl.createEl("h3", { text: "Advanced" });
+
+    new Setting(containerEl)
+      .setName("Allow File Writes")
+      .setDesc("Allow LLM to write and edit files. For Claude, this enables --dangerously-skip-permissions flag. Use with caution.")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.allowFileWrites);
+        toggle.onChange(async (value) => {
+          this.plugin.settings.allowFileWrites = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName("Debug Mode")
+      .setDesc("Log detailed execution info to the developer console (Ctrl+Shift+I)")
+      .addToggle((toggle) => {
+        toggle.setValue(this.plugin.settings.debugMode);
+        toggle.onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 
   private addProviderSettings(containerEl: HTMLElement, provider: LLMProvider): void {

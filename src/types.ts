@@ -40,6 +40,10 @@ export interface LLMPluginSettings {
     enabled: boolean;
     maxMessages: number;
   };
+  /** Allow LLM to write/edit files (requires dangerous permissions) */
+  allowFileWrites: boolean;
+  /** Enable debug logging to console */
+  debugMode: boolean;
 }
 
 /**
@@ -74,6 +78,8 @@ export const DEFAULT_SETTINGS: LLMPluginSettings = {
     enabled: true,
     maxMessages: 10,
   },
+  allowFileWrites: false,
+  debugMode: false,
 };
 
 /**

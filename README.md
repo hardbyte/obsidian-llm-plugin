@@ -66,6 +66,8 @@ Copy `main.js`, `manifest.json`, and `styles.css` to your vault's plugins folder
 
 ### Settings
 
+![Settings](images/settings.png)
+
 - **Default Provider** - Choose which LLM to use by default
 - **System Prompt File** - Select a markdown file to use as the system prompt
 - **Default Timeout** - Set timeout for LLM requests (can be overridden per-provider)
