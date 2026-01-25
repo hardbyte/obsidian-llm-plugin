@@ -623,9 +623,22 @@ export class LLMExecutor {
     const type = obj.type as string;
     const part = obj.part as Record<string, unknown> | undefined;
 
-    // Text output
-    if (type === "text" && part?.text) {
-      return { type: "text", content: part.text as string };
+    // Step start - indicates processing has begun (thinking indicator)
+    if (type === "step_start") {
+      return { type: "status", message: "Thinking..." };
+    }
+
+    // Step finish - processing complete
+    if (type === "step_finish") {
+      return { type: "status", message: "Complete" };
+    }
+
+    // Text output - check both part.text and direct text field
+    if (type === "text") {
+      const textContent = (part?.text || obj.text) as string | undefined;
+      if (textContent) {
+        return { type: "text", content: textContent };
+      }
     }
 
     // Thinking
