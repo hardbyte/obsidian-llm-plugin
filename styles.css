@@ -243,3 +243,69 @@
 .llm-empty-state h3 {
   margin-bottom: 10px;
 }
+
+/* Quick prompt modal specific styles */
+.llm-quick-prompt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.llm-quick-prompt-header h2 {
+  margin: 0;
+}
+
+.llm-quick-prompt-input-container {
+  margin-bottom: 15px;
+}
+
+.llm-quick-prompt-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.llm-quick-prompt-submit {
+  margin-top: 10px;
+  padding: 8px 16px;
+}
+
+.llm-quick-prompt-response {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: var(--background-secondary);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.llm-quick-prompt-action {
+  padding: 8px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+}
+
+.llm-quick-prompt-action:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+/* Clear button in chat */
+.llm-clear-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.llm-clear-btn:hover {
+  color: var(--text-error);
+  border-color: var(--text-error);
+}
