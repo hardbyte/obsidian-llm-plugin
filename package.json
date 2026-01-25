@@ -1,0 +1,30 @@
+{
+  "name": "obsidian-llm",
+  "version": "1.0.0",
+  "description": "Obsidian plugin for integrating with multiple LLM CLI tools",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "llm",
+    "ai",
+    "claude",
+    "opencode",
+    "codex",
+    "gemini"
+  ],
+  "author": "Brian",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.17.3",
+    "obsidian": "latest",
+    "tslib": "^2.4.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+# Build output
+main.js
+
+# Node
+node_modules/
+
+# npm
+npm-debug.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Mac
+.DS_Store
+
+# Obsidian
+data.json
+
+# Deliberate workflow
+.deliberate/
