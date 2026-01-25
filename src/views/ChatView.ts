@@ -78,20 +78,6 @@ export class ChatView extends ItemView {
   private renderHeader(container: HTMLElement) {
     const header = container.createDiv({ cls: "llm-chat-header" });
 
-    const titleRow = header.createDiv({ cls: "llm-chat-title-row" });
-    titleRow.createEl("h4", { text: "LLM Chat" });
-
-    // Clear conversation button
-    const clearBtn = titleRow.createEl("button", {
-      cls: "llm-icon-btn",
-      attr: { "aria-label": "Clear conversation" },
-    });
-    setIcon(clearBtn, "trash-2");
-    clearBtn.addEventListener("click", () => {
-      this.messages = [];
-      this.renderMessagesContent();
-    });
-
     const controlsRow = header.createDiv({ cls: "llm-chat-controls" });
 
     // Provider selector
@@ -123,6 +109,17 @@ export class ChatView extends ItemView {
     });
     this.includeContextToggle.checked = true;
     contextLabel.createSpan({ text: " Include open files" });
+
+    // Clear conversation button
+    const clearBtn = controlsRow.createEl("button", {
+      cls: "llm-icon-btn",
+      attr: { "aria-label": "Clear conversation" },
+    });
+    setIcon(clearBtn, "trash-2");
+    clearBtn.addEventListener("click", () => {
+      this.messages = [];
+      this.renderMessagesContent();
+    });
   }
 
   private renderMessages(container: HTMLElement) {
@@ -470,10 +467,19 @@ export class ChatView extends ItemView {
     }
 
     if (loading && this.messagesContainer) {
-      // Add loading indicator
-      const loadingEl = this.messagesContainer.createDiv({ cls: "llm-loading" });
-      loadingEl.createDiv({ cls: "llm-loading-spinner" });
-      loadingEl.createSpan({ text: "Thinking..." });
+      // Add loading indicator styled as assistant message
+      const loadingEl = this.messagesContainer.createDiv({ cls: "llm-message llm-message-assistant llm-loading" });
+
+      const headerEl = loadingEl.createDiv({ cls: "llm-message-header" });
+      headerEl.createSpan({
+        text: PROVIDER_DISPLAY_NAMES[this.currentProvider],
+        cls: "llm-message-role",
+      });
+
+      const contentEl = loadingEl.createDiv({ cls: "llm-message-content llm-loading-content" });
+      contentEl.createDiv({ cls: "llm-loading-spinner" });
+      contentEl.createSpan({ text: "Thinking..." });
+
       this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     } else if (!loading && this.messagesContainer) {
       // Remove loading indicator
