@@ -2,13 +2,15 @@ import {
   ItemView,
   WorkspaceLeaf,
   DropdownComponent,
+  MarkdownRenderer,
   Notice,
   setIcon,
   TFile,
   MarkdownView,
+  Component,
 } from "obsidian";
 import type LLMPlugin from "../../main";
-import type { LLMProvider, ConversationMessage } from "../types";
+import type { LLMProvider, ConversationMessage, ProgressEvent } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
 
 export const CHAT_VIEW_TYPE = "llm-chat-view";
@@ -30,6 +32,9 @@ export class ChatView extends ItemView {
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
   private includeContextToggle: HTMLInputElement | null = null;
+  private progressContainer: HTMLElement | null = null;
+  private currentToolUse: string | null = null;
+  private markdownComponents: Component[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -65,6 +70,9 @@ export class ChatView extends ItemView {
 
   async onClose() {
     this.executor.cancel();
+    // Clean up markdown components
+    this.markdownComponents.forEach((c) => c.unload());
+    this.markdownComponents = [];
   }
 
   private renderHeader(container: HTMLElement) {
@@ -124,6 +132,11 @@ export class ChatView extends ItemView {
 
   private renderMessagesContent() {
     if (!this.messagesContainer) return;
+
+    // Clean up old markdown components
+    this.markdownComponents.forEach((c) => c.unload());
+    this.markdownComponents = [];
+
     this.messagesContainer.empty();
 
     if (this.messages.length === 0) {
@@ -154,7 +167,23 @@ export class ChatView extends ItemView {
       });
 
       const contentEl = msgEl.createDiv({ cls: "llm-message-content" });
-      contentEl.setText(msg.content);
+
+      if (msg.role === "assistant") {
+        // Render assistant messages as markdown
+        const component = new Component();
+        component.load();
+        this.markdownComponents.push(component);
+        MarkdownRenderer.render(
+          this.app,
+          msg.content,
+          contentEl,
+          "",
+          component
+        );
+      } else {
+        // User messages as plain text
+        contentEl.setText(msg.content);
+      }
     });
 
     // Scroll to bottom
@@ -283,24 +312,31 @@ export class ChatView extends ItemView {
     const contextPrompt = await this.buildContextPrompt(prompt);
 
     try {
-      // Stream callback for real-time updates
+      // Stream callback for real-time text updates
       let streamedContent = "";
       const onStream = (chunk: string) => {
-        streamedContent += chunk;
+        streamedContent = chunk; // chunk is cumulative
         this.updateStreamingMessage(streamedContent);
+      };
+
+      // Progress callback for tool use/thinking events
+      const onProgress = (event: ProgressEvent) => {
+        this.handleProgressEvent(event);
       };
 
       const response = await this.executor.execute(
         contextPrompt,
         this.currentProvider,
-        this.plugin.settings.streamOutput ? onStream : undefined
+        this.plugin.settings.streamOutput ? onStream : undefined,
+        onProgress
       );
 
       if (response.error) {
         this.showError(response.error);
       } else {
-        // Remove streaming message if present
+        // Remove streaming/progress elements
         this.removeStreamingMessage();
+        this.clearProgress();
 
         // Add assistant message
         const assistantMessage: ConversationMessage = {
@@ -316,7 +352,72 @@ export class ChatView extends ItemView {
       this.showError(error instanceof Error ? error.message : String(error));
     } finally {
       this.setLoading(false);
+      this.clearProgress();
     }
+  }
+
+  /**
+   * Handle progress events from the LLM executor
+   */
+  private handleProgressEvent(event: ProgressEvent) {
+    if (!this.messagesContainer) return;
+
+    // Ensure progress container exists
+    if (!this.progressContainer) {
+      this.progressContainer = this.messagesContainer.createDiv({
+        cls: "llm-progress-container",
+      });
+    }
+
+    switch (event.type) {
+      case "tool_use":
+        this.currentToolUse = event.tool;
+        this.updateProgressDisplay(`Using tool: ${event.tool}`, "tool");
+        break;
+
+      case "thinking":
+        if (event.content) {
+          this.updateProgressDisplay("Thinking...", "thinking");
+        }
+        break;
+
+      case "status":
+        this.updateProgressDisplay(event.message, "status");
+        break;
+
+      case "text":
+        // Text events are handled by onStream callback
+        break;
+    }
+  }
+
+  /**
+   * Update the progress display
+   */
+  private updateProgressDisplay(message: string, type: "tool" | "thinking" | "status") {
+    if (!this.progressContainer) return;
+
+    this.progressContainer.empty();
+
+    const iconName = type === "tool" ? "wrench" : type === "thinking" ? "brain" : "loader";
+
+    const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
+    const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
+    setIcon(iconEl, iconName);
+    progressEl.createSpan({ text: message, cls: "llm-progress-text" });
+
+    this.messagesContainer!.scrollTop = this.messagesContainer!.scrollHeight;
+  }
+
+  /**
+   * Clear the progress display
+   */
+  private clearProgress() {
+    if (this.progressContainer) {
+      this.progressContainer.remove();
+      this.progressContainer = null;
+    }
+    this.currentToolUse = null;
   }
 
   private async buildContextPrompt(currentPrompt: string): Promise<string> {

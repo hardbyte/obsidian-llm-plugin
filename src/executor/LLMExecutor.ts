@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
-import type { LLMProvider, LLMResponse, ProviderConfig, LLMPluginSettings } from "../types";
+import type { LLMProvider, LLMResponse, ProviderConfig, LLMPluginSettings, ProgressEvent } from "../types";
 
 /**
  * Token usage information extracted from CLI responses
@@ -20,10 +20,10 @@ interface ParsedResponse {
 
 /**
  * Default CLI commands for each provider
- * Based on patterns from deliberate tool
+ * Use streaming JSON for Claude to get progress events
  */
 const DEFAULT_COMMANDS: Record<LLMProvider, string[]> = {
-  claude: ["claude"],
+  claude: ["claude", "--output-format", "stream-json"],
   gemini: ["gemini", "-y", "--output-format", "json"],
   codex: ["codex", "exec", "--skip-git-repo-check"],
   opencode: ["opencode", "run", "--format", "json"],
@@ -40,32 +40,56 @@ const PARSERS: Record<LLMProvider, (output: string) => ParsedResponse> = {
 };
 
 /**
- * Parse Claude CLI JSON output
- * Claude outputs JSON with "result" or "content" fields
+ * Parse Claude CLI streaming JSON output
+ * With stream-json format, Claude outputs one JSON object per line
  */
 function parseClaudeOutput(output: string): ParsedResponse {
-  try {
-    const parsed = JSON.parse(output);
-    const content =
-      parsed.result ||
-      parsed.content ||
-      (typeof parsed.structured_output === "string"
-        ? parsed.structured_output
-        : JSON.stringify(parsed.structured_output, null, 2)) ||
-      JSON.stringify(parsed, null, 2);
+  const textParts: string[] = [];
+  const tokens: TokenUsage = { input: 0, output: 0 };
+  let cost = 0;
 
-    const tokens: TokenUsage | undefined = parsed.usage
-      ? {
-          input: parsed.usage.input_tokens || 0,
-          output: parsed.usage.output_tokens || 0,
+  for (const line of output.trim().split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+
+      // Handle different event types
+      if (obj.type === "assistant" && obj.message?.content) {
+        // Final message content
+        for (const block of obj.message.content) {
+          if (block.type === "text") {
+            textParts.push(block.text);
+          }
         }
-      : undefined;
-
-    return { content, tokens, cost: parsed.total_cost_usd || parsed.cost_usd };
-  } catch {
-    // Not JSON, return raw output
-    return { content: output };
+      } else if (obj.type === "content_block_delta" && obj.delta?.text) {
+        textParts.push(obj.delta.text);
+      } else if (obj.type === "result" && obj.result) {
+        // Legacy format fallback
+        textParts.push(obj.result);
+      } else if (obj.type === "message_delta" && obj.usage) {
+        tokens.output = obj.usage.output_tokens || 0;
+      } else if (obj.type === "message_start" && obj.message?.usage) {
+        tokens.input = obj.message.usage.input_tokens || 0;
+      } else if (obj.result) {
+        // Simple result format
+        textParts.push(obj.result);
+      } else if (obj.cost_usd) {
+        cost = obj.cost_usd;
+      }
+    } catch {
+      // Not JSON, might be plain text
+      if (line.trim() && !line.startsWith("{")) {
+        textParts.push(line);
+      }
+    }
   }
+
+  const content = textParts.join("").trim() || output;
+  return {
+    content,
+    tokens: tokens.input > 0 || tokens.output > 0 ? tokens : undefined,
+    cost: cost > 0 ? cost : undefined,
+  };
 }
 
 /**
@@ -177,9 +201,14 @@ function parseOpenCodeOutput(output: string): ParsedResponse {
 }
 
 /**
- * Callback for streaming output updates
+ * Callback for streaming text updates (legacy)
  */
 export type StreamCallback = (chunk: string) => void;
+
+/**
+ * Callback for progress events during execution
+ */
+export type ProgressCallback = (event: ProgressEvent) => void;
 
 /**
  * LLMExecutor wraps CLI tools for LLM interaction
@@ -205,7 +234,8 @@ export class LLMExecutor {
   async execute(
     prompt: string,
     provider?: LLMProvider,
-    onStream?: StreamCallback
+    onStream?: StreamCallback,
+    onProgress?: ProgressCallback
   ): Promise<LLMResponse> {
     const selectedProvider = provider || this.settings.defaultProvider;
     const providerConfig = this.settings.providers[selectedProvider];
@@ -226,7 +256,8 @@ export class LLMExecutor {
         selectedProvider,
         providerConfig,
         prompt,
-        onStream
+        onStream,
+        onProgress
       );
       const durationMs = Date.now() - startTime;
 
@@ -267,7 +298,8 @@ export class LLMExecutor {
     provider: LLMProvider,
     config: ProviderConfig,
     prompt: string,
-    onStream?: StreamCallback
+    onStream?: StreamCallback,
+    onProgress?: ProgressCallback
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const command = this.buildCommand(provider, config);
@@ -294,15 +326,22 @@ export class LLMExecutor {
 
       let stdout = "";
       let stderr = "";
+      let streamedText = "";
 
       child.stdout?.on("data", (data: Buffer) => {
         const chunk = data.toString();
         stdout += chunk;
-        if (onStream) {
-          // Try to extract partial content for streaming
-          const partial = this.extractPartialContent(provider, chunk);
-          if (partial) {
-            onStream(partial);
+
+        // Parse streaming events
+        const events = this.parseStreamingEvents(provider, chunk);
+        for (const event of events) {
+          if (onProgress) {
+            onProgress(event);
+          }
+          // Also feed text events to legacy stream callback
+          if (event.type === "text" && onStream) {
+            streamedText += event.content;
+            onStream(streamedText);
           }
         }
       });
@@ -372,40 +411,169 @@ export class LLMExecutor {
   }
 
   /**
-   * Extract partial content from streaming output for real-time display
+   * Parse streaming events from CLI output
    */
-  private extractPartialContent(
+  private parseStreamingEvents(
     provider: LLMProvider,
     chunk: string
-  ): string | null {
-    // For JSON-based providers, try to extract text events
-    if (provider === "codex" || provider === "opencode") {
-      const lines = chunk.split("\n");
-      const textParts: string[] = [];
+  ): ProgressEvent[] {
+    const events: ProgressEvent[] = [];
+    const lines = chunk.split("\n");
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const obj = JSON.parse(line);
-          if (provider === "codex") {
-            if (obj.type === "item.completed" && obj.item?.text) {
-              textParts.push(obj.item.text);
-            }
-          } else if (provider === "opencode") {
-            if (obj.type === "text" && obj.part?.text) {
-              textParts.push(obj.part.text);
-            }
-          }
-        } catch {
-          // Not complete JSON yet
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      try {
+        const obj = JSON.parse(line);
+        const parsed = this.parseEventObject(provider, obj);
+        if (parsed) {
+          events.push(parsed);
         }
+      } catch {
+        // Not complete JSON yet, skip
       }
-
-      return textParts.length > 0 ? textParts.join("") : null;
     }
 
-    // For claude/gemini, the output may not be streamable from CLI
-    // Return null and let the full response be parsed at the end
+    return events;
+  }
+
+  /**
+   * Parse a single JSON event object into a ProgressEvent
+   */
+  private parseEventObject(
+    provider: LLMProvider,
+    obj: Record<string, unknown>
+  ): ProgressEvent | null {
+    switch (provider) {
+      case "claude":
+        return this.parseClaudeEvent(obj);
+      case "codex":
+        return this.parseCodexEvent(obj);
+      case "opencode":
+        return this.parseOpenCodeEvent(obj);
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Parse Claude streaming JSON events
+   */
+  private parseClaudeEvent(obj: Record<string, unknown>): ProgressEvent | null {
+    const type = obj.type as string;
+
+    // Text content streaming
+    if (type === "content_block_delta") {
+      const delta = obj.delta as Record<string, unknown> | undefined;
+      if (delta?.text) {
+        return { type: "text", content: delta.text as string };
+      }
+    }
+
+    // Tool use events
+    if (type === "content_block_start") {
+      const contentBlock = obj.content_block as Record<string, unknown> | undefined;
+      if (contentBlock?.type === "tool_use") {
+        return {
+          type: "tool_use",
+          tool: contentBlock.name as string,
+          status: "started",
+        };
+      }
+    }
+
+    // Tool result/completion
+    if (type === "content_block_stop") {
+      const index = obj.index as number | undefined;
+      // We don't have the tool name here, but we can signal completion
+      if (index !== undefined) {
+        return { type: "status", message: "Tool completed" };
+      }
+    }
+
+    // Thinking content (if using extended thinking)
+    if (type === "content_block_start") {
+      const contentBlock = obj.content_block as Record<string, unknown> | undefined;
+      if (contentBlock?.type === "thinking") {
+        return { type: "thinking", content: "" };
+      }
+    }
+
+    if (type === "content_block_delta") {
+      const delta = obj.delta as Record<string, unknown> | undefined;
+      if (delta?.type === "thinking_delta" && delta?.thinking) {
+        return { type: "thinking", content: delta.thinking as string };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Parse Codex streaming JSON events
+   */
+  private parseCodexEvent(obj: Record<string, unknown>): ProgressEvent | null {
+    const type = obj.type as string;
+
+    // Text output
+    if (type === "item.completed") {
+      const item = obj.item as Record<string, unknown> | undefined;
+      if (item?.text) {
+        return { type: "text", content: item.text as string };
+      }
+    }
+
+    // Tool/function calls
+    if (type === "function_call" || type === "tool.run") {
+      const name = (obj.name || obj.tool) as string | undefined;
+      return {
+        type: "tool_use",
+        tool: name || "tool",
+        input: obj.arguments as string | undefined,
+        status: "started",
+      };
+    }
+
+    // Message started (thinking)
+    if (type === "message.started") {
+      return { type: "status", message: "Thinking..." };
+    }
+
+    return null;
+  }
+
+  /**
+   * Parse OpenCode streaming JSON events
+   */
+  private parseOpenCodeEvent(obj: Record<string, unknown>): ProgressEvent | null {
+    const type = obj.type as string;
+    const part = obj.part as Record<string, unknown> | undefined;
+
+    // Text output
+    if (type === "text" && part?.text) {
+      return { type: "text", content: part.text as string };
+    }
+
+    // Thinking
+    if (type === "thinking" && part?.thinking) {
+      return { type: "thinking", content: part.thinking as string };
+    }
+
+    // Tool calls
+    if (type === "tool_call" || type === "tool_start") {
+      const toolName = (part?.tool || part?.name || obj.tool) as string | undefined;
+      return {
+        type: "tool_use",
+        tool: toolName || "tool",
+        input: part?.input as string | undefined,
+        status: "started",
+      };
+    }
+
+    if (type === "tool_result" || type === "tool_end") {
+      return { type: "status", message: "Tool completed" };
+    }
+
     return null;
   }
 }

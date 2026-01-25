@@ -99,3 +99,12 @@ export interface LLMResponse {
   durationMs: number;
   error?: string;
 }
+
+/**
+ * Progress event types emitted during LLM execution
+ */
+export type ProgressEvent =
+  | { type: "thinking"; content: string }
+  | { type: "tool_use"; tool: string; input?: string; status?: "started" | "completed" }
+  | { type: "text"; content: string }
+  | { type: "status"; message: string };

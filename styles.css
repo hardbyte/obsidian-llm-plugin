@@ -465,3 +465,163 @@
   background-color: var(--background-primary);
   margin-right: 8px;
 }
+
+/* Progress indicators */
+.llm-progress-container {
+  margin: 10px 0;
+}
+
+.llm-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  animation: llm-pulse 2s ease-in-out infinite;
+}
+
+.llm-progress-tool {
+  background-color: var(--background-modifier-info);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.llm-progress-thinking {
+  background-color: var(--background-modifier-message);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.llm-progress-status {
+  background-color: var(--background-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.llm-progress-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.llm-progress-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.llm-progress-text {
+  flex: 1;
+}
+
+@keyframes llm-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Markdown rendering in messages */
+.llm-message-content p {
+  margin: 0 0 0.5em 0;
+}
+
+.llm-message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.llm-message-content h1,
+.llm-message-content h2,
+.llm-message-content h3,
+.llm-message-content h4,
+.llm-message-content h5,
+.llm-message-content h6 {
+  margin: 0.5em 0 0.3em 0;
+  font-weight: 600;
+}
+
+.llm-message-content h1 { font-size: 1.4em; }
+.llm-message-content h2 { font-size: 1.25em; }
+.llm-message-content h3 { font-size: 1.1em; }
+
+.llm-message-content ul,
+.llm-message-content ol {
+  margin: 0.3em 0;
+  padding-left: 1.5em;
+}
+
+.llm-message-content li {
+  margin: 0.2em 0;
+}
+
+.llm-message-content code {
+  background-color: var(--background-modifier-code);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.llm-message-content pre {
+  background-color: var(--background-modifier-code);
+  padding: 10px;
+  border-radius: 5px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.llm-message-content pre code {
+  background: none;
+  padding: 0;
+}
+
+.llm-message-content blockquote {
+  border-left: 3px solid var(--interactive-accent);
+  margin: 0.5em 0;
+  padding-left: 10px;
+  color: var(--text-muted);
+}
+
+.llm-message-content a {
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+.llm-message-content a:hover {
+  text-decoration: underline;
+}
+
+.llm-message-content strong {
+  font-weight: 600;
+}
+
+.llm-message-content em {
+  font-style: italic;
+}
+
+.llm-message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5em 0;
+}
+
+.llm-message-content th,
+.llm-message-content td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.llm-message-content th {
+  background-color: var(--background-secondary);
+  font-weight: 600;
+}
+
+.llm-message-content hr {
+  border: none;
+  border-top: 1px solid var(--background-modifier-border);
+  margin: 1em 0;
+}
