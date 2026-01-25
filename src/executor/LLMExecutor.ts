@@ -457,52 +457,83 @@ export class LLMExecutor {
   }
 
   /**
-   * Parse Claude streaming JSON events
+   * Parse Claude CLI streaming JSON events
+   *
+   * Claude CLI with --verbose --output-format stream-json outputs:
+   * - {"type":"system","subtype":"init",...} - initialization
+   * - {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{...}}]}} - tool call
+   * - {"type":"user","tool_use_result":{...}} - tool result
+   * - {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}} - text response
+   * - {"type":"result","subtype":"success",...} - final result
    */
   private parseClaudeEvent(obj: Record<string, unknown>): ProgressEvent | null {
-    const type = obj.type as string;
+    const eventType = obj.type as string;
 
-    // Text content streaming
-    if (type === "content_block_delta") {
-      const delta = obj.delta as Record<string, unknown> | undefined;
-      if (delta?.text) {
-        return { type: "text", content: delta.text as string };
+    // System init - show that we're starting
+    if (eventType === "system" && obj.subtype === "init") {
+      return { type: "status", message: "Connected to Claude..." };
+    }
+
+    // Assistant message with tool use or text
+    if (eventType === "assistant") {
+      const message = obj.message as Record<string, unknown> | undefined;
+      const content = message?.content as Array<Record<string, unknown>> | undefined;
+
+      if (content && content.length > 0) {
+        for (const block of content) {
+          if (block.type === "tool_use") {
+            const toolName = block.name as string;
+            const input = block.input as Record<string, unknown> | undefined;
+
+            // Extract meaningful info from tool input
+            let inputSummary: string | undefined;
+            if (input) {
+              if (input.file_path) {
+                inputSummary = input.file_path as string;
+              } else if (input.pattern) {
+                inputSummary = input.pattern as string;
+              } else if (input.command) {
+                inputSummary = (input.command as string).slice(0, 50);
+              } else if (input.query) {
+                inputSummary = (input.query as string).slice(0, 50);
+              }
+            }
+
+            return {
+              type: "tool_use",
+              tool: toolName,
+              input: inputSummary,
+              status: "started",
+            };
+          }
+
+          if (block.type === "text") {
+            const text = block.text as string;
+            if (text) {
+              return { type: "text", content: text };
+            }
+          }
+        }
       }
     }
 
-    // Tool use events
-    if (type === "content_block_start") {
-      const contentBlock = obj.content_block as Record<string, unknown> | undefined;
-      if (contentBlock?.type === "tool_use") {
-        return {
-          type: "tool_use",
-          tool: contentBlock.name as string,
-          status: "started",
-        };
-      }
-    }
-
-    // Tool result/completion
-    if (type === "content_block_stop") {
-      const index = obj.index as number | undefined;
-      // We don't have the tool name here, but we can signal completion
-      if (index !== undefined) {
+    // User message with tool result - tool completed
+    if (eventType === "user") {
+      const toolResult = obj.tool_use_result as Record<string, unknown> | undefined;
+      if (toolResult) {
+        const file = toolResult.file as Record<string, unknown> | undefined;
+        if (file?.filePath) {
+          return { type: "status", message: `Read: ${file.filePath}` };
+        }
         return { type: "status", message: "Tool completed" };
       }
     }
 
-    // Thinking content (if using extended thinking)
-    if (type === "content_block_start") {
-      const contentBlock = obj.content_block as Record<string, unknown> | undefined;
-      if (contentBlock?.type === "thinking") {
-        return { type: "thinking", content: "" };
-      }
-    }
-
-    if (type === "content_block_delta") {
-      const delta = obj.delta as Record<string, unknown> | undefined;
-      if (delta?.type === "thinking_delta" && delta?.thinking) {
-        return { type: "thinking", content: delta.thinking as string };
+    // Final result
+    if (eventType === "result") {
+      const numTurns = obj.num_turns as number | undefined;
+      if (numTurns && numTurns > 1) {
+        return { type: "status", message: `Completed (${numTurns} turns)` };
       }
     }
 

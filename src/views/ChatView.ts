@@ -193,14 +193,14 @@ export class ChatView extends ItemView {
     this.inputEl = inputContainer.createEl("textarea", {
       cls: "llm-chat-input",
       attr: {
-        placeholder: "Type your message... (Ctrl+Enter to send)",
+        placeholder: "Type your message... (Enter to send, Shift+Enter for newline)",
         rows: "3",
       },
     });
 
-    // Use capture phase and stop propagation to prevent Obsidian from intercepting
+    // Enter to send, Shift+Enter for newline (common chat pattern)
     this.inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
         this.sendMessage();
@@ -361,6 +361,12 @@ export class ChatView extends ItemView {
   private handleProgressEvent(event: ProgressEvent) {
     if (!this.messagesContainer) return;
 
+    // Remove the generic loading indicator when we get real progress
+    const loadingEl = this.messagesContainer.querySelector(".llm-loading");
+    if (loadingEl && event.type !== "text") {
+      loadingEl.remove();
+    }
+
     // Ensure progress container exists
     if (!this.progressContainer) {
       this.progressContainer = this.messagesContainer.createDiv({
@@ -369,15 +375,17 @@ export class ChatView extends ItemView {
     }
 
     switch (event.type) {
-      case "tool_use":
+      case "tool_use": {
         this.currentToolUse = event.tool;
-        this.updateProgressDisplay(`Using tool: ${event.tool}`, "tool");
+        const toolDisplay = event.input
+          ? `${event.tool}: ${event.input}`
+          : event.tool;
+        this.updateProgressDisplay(toolDisplay, "tool");
         break;
+      }
 
       case "thinking":
-        if (event.content) {
-          this.updateProgressDisplay("Thinking...", "thinking");
-        }
+        this.updateProgressDisplay("Thinking...", "thinking");
         break;
 
       case "status":
