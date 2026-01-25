@@ -15,8 +15,8 @@ export interface ProviderConfig {
   additionalArgs?: string[];
   /** Environment variables to set */
   envVars?: Record<string, string>;
-  /** Timeout in seconds */
-  timeout: number;
+  /** Timeout in seconds (optional - uses default if not set) */
+  timeout?: number;
 }
 
 /**
@@ -31,8 +31,10 @@ export interface LLMPluginSettings {
   insertPosition: "cursor" | "end" | "replace-selection";
   /** Whether to show streaming output */
   streamOutput: boolean;
-  /** Default system prompt */
-  systemPrompt: string;
+  /** Path to system prompt file in vault (empty = none) */
+  systemPromptFile: string;
+  /** Default timeout in seconds for all providers */
+  defaultTimeout: number;
   /** Conversation history settings */
   conversationHistory: {
     enabled: boolean;
@@ -46,19 +48,15 @@ export interface LLMPluginSettings {
 export const DEFAULT_PROVIDER_CONFIGS: Record<LLMProvider, ProviderConfig> = {
   claude: {
     enabled: true,
-    timeout: 120,
   },
   opencode: {
     enabled: false,
-    timeout: 120,
   },
   codex: {
     enabled: false,
-    timeout: 120,
   },
   gemini: {
     enabled: false,
-    timeout: 120,
   },
 };
 
@@ -70,7 +68,8 @@ export const DEFAULT_SETTINGS: LLMPluginSettings = {
   providers: DEFAULT_PROVIDER_CONFIGS,
   insertPosition: "cursor",
   streamOutput: true,
-  systemPrompt: "",
+  systemPromptFile: "",
+  defaultTimeout: 120,
   conversationHistory: {
     enabled: true,
     maxMessages: 10,

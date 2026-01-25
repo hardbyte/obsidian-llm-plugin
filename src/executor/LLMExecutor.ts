@@ -331,12 +331,13 @@ export class LLMExecutor {
         }
       });
 
-      // Set up timeout
-      const timeoutMs = config.timeout * 1000;
+      // Set up timeout (use provider-specific or fall back to default)
+      const timeoutSeconds = config.timeout ?? this.settings.defaultTimeout;
+      const timeoutMs = timeoutSeconds * 1000;
       const timeout = setTimeout(() => {
         if (this.activeProcess === child) {
           child.kill("SIGTERM");
-          reject(new Error(`Timeout after ${config.timeout} seconds`));
+          reject(new Error(`Timeout after ${timeoutSeconds} seconds`));
         }
       }, timeoutMs);
 

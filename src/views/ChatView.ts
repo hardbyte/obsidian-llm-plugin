@@ -1,7 +1,17 @@
-import { App, Modal, DropdownComponent, Notice, setIcon, TFile } from "obsidian";
+import {
+  ItemView,
+  WorkspaceLeaf,
+  DropdownComponent,
+  Notice,
+  setIcon,
+  TFile,
+  MarkdownView,
+} from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider, ConversationMessage } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
+
+export const CHAT_VIEW_TYPE = "llm-chat-view";
 
 const PROVIDER_DISPLAY_NAMES: Record<LLMProvider, string> = {
   claude: "Claude",
@@ -10,7 +20,7 @@ const PROVIDER_DISPLAY_NAMES: Record<LLMProvider, string> = {
   gemini: "Gemini",
 };
 
-export class ChatModal extends Modal {
+export class ChatView extends ItemView {
   plugin: LLMPlugin;
   private executor: LLMExecutor;
   private messages: ConversationMessage[] = [];
@@ -19,32 +29,65 @@ export class ChatModal extends Modal {
   private messagesContainer: HTMLElement | null = null;
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
+  private includeContextToggle: HTMLInputElement | null = null;
 
-  constructor(app: App, plugin: LLMPlugin) {
-    super(app);
+  constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
+    super(leaf);
     this.plugin = plugin;
     this.executor = new LLMExecutor(plugin.settings);
     this.currentProvider = plugin.settings.defaultProvider;
   }
 
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass("llm-chat-modal");
+  getViewType(): string {
+    return CHAT_VIEW_TYPE;
+  }
 
-    this.renderHeader(contentEl);
-    this.renderMessages(contentEl);
-    this.renderInput(contentEl);
+  getDisplayText(): string {
+    return "LLM Chat";
+  }
+
+  getIcon(): string {
+    return "message-square";
+  }
+
+  async onOpen() {
+    const container = this.containerEl.children[1];
+    container.empty();
+    container.addClass("llm-chat-view");
+
+    this.renderHeader(container as HTMLElement);
+    this.renderMessages(container as HTMLElement);
+    this.renderInput(container as HTMLElement);
 
     // Focus the input
     setTimeout(() => this.inputEl?.focus(), 50);
   }
 
+  async onClose() {
+    this.executor.cancel();
+  }
+
   private renderHeader(container: HTMLElement) {
     const header = container.createDiv({ cls: "llm-chat-header" });
-    header.createEl("h2", { text: "LLM Chat" });
 
-    const providerSelector = header.createDiv({ cls: "llm-provider-selector" });
+    const titleRow = header.createDiv({ cls: "llm-chat-title-row" });
+    titleRow.createEl("h4", { text: "LLM Chat" });
+
+    // Clear conversation button
+    const clearBtn = titleRow.createEl("button", {
+      cls: "llm-icon-btn",
+      attr: { "aria-label": "Clear conversation" },
+    });
+    setIcon(clearBtn, "trash-2");
+    clearBtn.addEventListener("click", () => {
+      this.messages = [];
+      this.renderMessagesContent();
+    });
+
+    const controlsRow = header.createDiv({ cls: "llm-chat-controls" });
+
+    // Provider selector
+    const providerSelector = controlsRow.createDiv({ cls: "llm-provider-selector" });
     providerSelector.createSpan({ text: "Provider: " });
 
     const dropdown = new DropdownComponent(providerSelector);
@@ -61,16 +104,17 @@ export class ChatModal extends Modal {
       this.currentProvider = value as LLMProvider;
     });
 
-    // Clear conversation button
-    const clearBtn = header.createEl("button", {
-      cls: "llm-clear-btn",
-      attr: { "aria-label": "Clear conversation" },
+    // Include context toggle
+    const contextToggle = controlsRow.createDiv({ cls: "llm-context-toggle" });
+    const contextLabel = contextToggle.createEl("label", {
+      cls: "llm-toggle-label",
     });
-    setIcon(clearBtn, "trash-2");
-    clearBtn.addEventListener("click", () => {
-      this.messages = [];
-      this.renderMessagesContent();
+    this.includeContextToggle = contextLabel.createEl("input", {
+      type: "checkbox",
+      attr: { checked: "true" },
     });
+    this.includeContextToggle.checked = true;
+    contextLabel.createSpan({ text: " Include open files" });
   }
 
   private renderMessages(container: HTMLElement) {
@@ -86,9 +130,10 @@ export class ChatModal extends Modal {
       const emptyState = this.messagesContainer.createDiv({
         cls: "llm-empty-state",
       });
-      emptyState.createEl("h3", { text: "Start a conversation" });
+      emptyState.createEl("p", { text: "Start a conversation with the LLM." });
       emptyState.createEl("p", {
-        text: "Type a message below to begin chatting with the LLM.",
+        text: "Toggle 'Include open files' to provide context from your workspace.",
+        cls: "llm-empty-hint",
       });
       return;
     }
@@ -101,9 +146,11 @@ export class ChatModal extends Modal {
       const headerEl = msgEl.createDiv({ cls: "llm-message-header" });
       headerEl.createSpan({
         text: msg.role === "user" ? "You" : PROVIDER_DISPLAY_NAMES[msg.provider],
+        cls: "llm-message-role",
       });
       headerEl.createSpan({
         text: new Date(msg.timestamp).toLocaleTimeString(),
+        cls: "llm-message-time",
       });
 
       const contentEl = msgEl.createDiv({ cls: "llm-message-content" });
@@ -132,12 +179,61 @@ export class ChatModal extends Modal {
       }
     });
 
-    this.sendBtn = inputContainer.createEl("button", {
+    const buttonRow = inputContainer.createDiv({ cls: "llm-input-buttons" });
+
+    this.sendBtn = buttonRow.createEl("button", {
       text: "Send",
-      cls: "llm-chat-send",
+      cls: "llm-chat-send mod-cta",
     });
 
     this.sendBtn.addEventListener("click", () => this.sendMessage());
+  }
+
+  /**
+   * Get context from open files in the workspace
+   */
+  private getOpenFilesContext(): string {
+    const openFiles: { path: string; content: string }[] = [];
+    const activeFile = this.app.workspace.getActiveFile();
+
+    // Get all open markdown views
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (leaf.view instanceof MarkdownView) {
+        const file = leaf.view.file;
+        if (file) {
+          const content = leaf.view.editor.getValue();
+          // Truncate large files
+          const truncatedContent =
+            content.length > 4000
+              ? content.slice(0, 4000) + "\n... (truncated)"
+              : content;
+
+          openFiles.push({
+            path: file.path,
+            content: truncatedContent,
+          });
+        }
+      }
+    });
+
+    if (openFiles.length === 0) {
+      return "";
+    }
+
+    // Build context string
+    const contextParts: string[] = [];
+    contextParts.push("=== Open Files Context ===\n");
+
+    openFiles.forEach(({ path, content }) => {
+      const isActive = activeFile?.path === path;
+      contextParts.push(`--- ${path}${isActive ? " (active)" : ""} ---`);
+      contextParts.push(content);
+      contextParts.push("");
+    });
+
+    contextParts.push("=== End of Context ===\n");
+
+    return contextParts.join("\n");
   }
 
   /**
@@ -225,33 +321,36 @@ export class ChatModal extends Modal {
 
   private async buildContextPrompt(currentPrompt: string): Promise<string> {
     const systemPrompt = await this.getSystemPrompt();
-
-    if (
-      !this.plugin.settings.conversationHistory.enabled ||
-      this.messages.length <= 1
-    ) {
-      // Include system prompt if set
-      if (systemPrompt) {
-        return `System: ${systemPrompt}\n\nUser: ${currentPrompt}`;
-      }
-      return currentPrompt;
-    }
-
-    // Build conversation history
-    const maxMessages = this.plugin.settings.conversationHistory.maxMessages;
-    const recentMessages = this.messages.slice(-maxMessages - 1, -1); // Exclude the message we just added
+    const includeContext = this.includeContextToggle?.checked ?? false;
+    const openFilesContext = includeContext ? this.getOpenFilesContext() : "";
 
     const contextParts: string[] = [];
 
+    // Add system prompt if set
     if (systemPrompt) {
       contextParts.push(`System: ${systemPrompt}`);
     }
 
-    recentMessages.forEach((msg) => {
-      const role = msg.role === "user" ? "User" : "Assistant";
-      contextParts.push(`${role}: ${msg.content}`);
-    });
+    // Add open files context
+    if (openFilesContext) {
+      contextParts.push(openFilesContext);
+    }
 
+    // Add conversation history if enabled
+    if (
+      this.plugin.settings.conversationHistory.enabled &&
+      this.messages.length > 1
+    ) {
+      const maxMessages = this.plugin.settings.conversationHistory.maxMessages;
+      const recentMessages = this.messages.slice(-maxMessages - 1, -1);
+
+      recentMessages.forEach((msg) => {
+        const role = msg.role === "user" ? "User" : "Assistant";
+        contextParts.push(`${role}: ${msg.content}`);
+      });
+    }
+
+    // Add current prompt
     contextParts.push(`User: ${currentPrompt}`);
 
     return contextParts.join("\n\n");
@@ -300,8 +399,9 @@ export class ChatModal extends Modal {
       const headerEl = streamingEl.createDiv({ cls: "llm-message-header" });
       headerEl.createSpan({
         text: PROVIDER_DISPLAY_NAMES[this.currentProvider],
+        cls: "llm-message-role",
       });
-      headerEl.createSpan({ text: "..." });
+      headerEl.createSpan({ text: "...", cls: "llm-message-time" });
 
       streamingEl.createDiv({ cls: "llm-message-content" });
     }
@@ -328,11 +428,5 @@ export class ChatModal extends Modal {
     const errorEl = this.messagesContainer.createDiv({ cls: "llm-error-message" });
     errorEl.setText(`Error: ${message}`);
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-  }
-
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-    this.executor.cancel();
   }
 }

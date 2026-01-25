@@ -1,4 +1,4 @@
-import { App, Modal, DropdownComponent, Notice } from "obsidian";
+import { App, Modal, DropdownComponent, Notice, TFile } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
@@ -146,6 +146,27 @@ export class QuickPromptModal extends Modal {
     });
   }
 
+  /**
+   * Read the system prompt from the configured file
+   */
+  private async getSystemPrompt(): Promise<string> {
+    const filePath = this.plugin.settings.systemPromptFile;
+    if (!filePath) return "";
+
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) {
+      new Notice(`System prompt file not found: ${filePath}`);
+      return "";
+    }
+
+    try {
+      return await this.app.vault.cachedRead(file);
+    } catch (error) {
+      new Notice(`Error reading system prompt file: ${error}`);
+      return "";
+    }
+  }
+
   private async submitPrompt() {
     if (!this.inputEl || this.isLoading) return;
 
@@ -158,8 +179,9 @@ export class QuickPromptModal extends Modal {
     }
 
     // Add system prompt if set
-    if (this.plugin.settings.systemPrompt) {
-      prompt = `System: ${this.plugin.settings.systemPrompt}\n\nUser: ${prompt}`;
+    const systemPrompt = await this.getSystemPrompt();
+    if (systemPrompt) {
+      prompt = `System: ${systemPrompt}\n\nUser: ${prompt}`;
     }
 
     this.setLoading(true);

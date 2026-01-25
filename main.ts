@@ -1,8 +1,9 @@
-import { Editor, MarkdownView, Notice, Plugin } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import type { LLMPluginSettings } from "./src/types";
 import { DEFAULT_SETTINGS } from "./src/types";
 import { LLMSettingTab } from "./src/settings/SettingsTab";
-import { ChatModal, QuickPromptModal } from "./src/modals";
+import { QuickPromptModal } from "./src/modals";
+import { ChatView, CHAT_VIEW_TYPE } from "./src/views";
 import { LLMExecutor, detectAvailableProviders } from "./src/executor/LLMExecutor";
 
 export default class LLMPlugin extends Plugin {
@@ -16,9 +17,12 @@ export default class LLMPlugin extends Plugin {
     // Initialize executor
     this.executor = new LLMExecutor(this.settings);
 
+    // Register the chat view
+    this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
+
     // Add ribbon icon for quick chat
     this.addRibbonIcon("message-square", "Open LLM Chat", () => {
-      new ChatModal(this.app, this).open();
+      this.activateChatView();
     });
 
     // Add status bar item
@@ -31,7 +35,7 @@ export default class LLMPlugin extends Plugin {
       id: "open-llm-chat",
       name: "Open Chat",
       callback: () => {
-        new ChatModal(this.app, this).open();
+        this.activateChatView();
       },
     });
 
@@ -166,11 +170,54 @@ export default class LLMPlugin extends Plugin {
 
   onunload() {
     this.executor?.cancel();
+    // Detach all chat view leaves
+    this.app.workspace.detachLeavesOfType(CHAT_VIEW_TYPE);
+  }
+
+  /**
+   * Activate or reveal the chat view panel
+   */
+  async activateChatView() {
+    const { workspace } = this.app;
+
+    let leaf: WorkspaceLeaf | null = null;
+    const leaves = workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+
+    if (leaves.length > 0) {
+      // View already exists, reveal it
+      leaf = leaves[0];
+    } else {
+      // Create a new leaf in the right sidebar
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+      }
+    }
+
+    if (leaf) {
+      workspace.revealLeaf(leaf);
+    }
   }
 
   async loadSettings() {
     const loadedData = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData ?? {});
+
+    // Migration: handle old systemPrompt string setting
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const oldData = loadedData as any;
+    if (oldData?.systemPrompt && typeof oldData.systemPrompt === "string" && oldData.systemPrompt.trim()) {
+      // Old inline system prompt exists - show migration notice
+      new Notice(
+        "System prompt settings have changed. Please create a note with your system prompt and select it in settings.",
+        10000
+      );
+    }
+
+    // Migration: handle old per-provider timeout (ensure defaultTimeout exists)
+    if (this.settings.defaultTimeout === undefined) {
+      this.settings.defaultTimeout = 120;
+    }
   }
 
   async saveSettings() {
