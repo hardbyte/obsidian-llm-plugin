@@ -23,7 +23,7 @@ interface ParsedResponse {
  * Use streaming JSON for Claude to get progress events
  */
 const DEFAULT_COMMANDS: Record<LLMProvider, string[]> = {
-  claude: ["claude", "--output-format", "stream-json"],
+  claude: ["claude", "--verbose", "--output-format", "stream-json"],
   gemini: ["gemini", "-y", "--output-format", "json"],
   codex: ["codex", "exec", "--skip-git-repo-check"],
   opencode: ["opencode", "run", "--format", "json"],
