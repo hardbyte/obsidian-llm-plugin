@@ -201,12 +201,14 @@ export class ChatView extends ItemView {
       },
     });
 
+    // Use capture phase and stop propagation to prevent Obsidian from intercepting
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
+        e.stopPropagation();
         this.sendMessage();
       }
-    });
+    }, true);
 
     const buttonRow = inputContainer.createDiv({ cls: "llm-input-buttons" });
 
