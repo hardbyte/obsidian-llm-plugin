@@ -227,6 +227,9 @@ export class ChatView extends ItemView {
             }
           });
         });
+
+        // Add change handlers for checkboxes in task lists
+        this.attachCheckboxHandlers(contentEl, msg);
       } else {
         // User messages as plain text
         contentEl.setText(msg.content);
@@ -879,6 +882,99 @@ export class ChatView extends ItemView {
     const errorEl = this.messagesContainer.createDiv({ cls: "llm-error-message" });
     errorEl.setText(`Error: ${message}`);
     this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
+
+  /**
+   * Attach change handlers to checkboxes in rendered markdown
+   * When a checkbox is toggled, update the message and notify the LLM
+   */
+  private attachCheckboxHandlers(contentEl: HTMLElement, msg: ConversationMessage) {
+    // Find all checkbox inputs (Obsidian renders task lists with data-task attribute)
+    const checkboxes = contentEl.querySelectorAll<HTMLInputElement>(
+      'input[type="checkbox"], .task-list-item-checkbox'
+    );
+
+    checkboxes.forEach((checkbox) => {
+      // Make checkbox interactive (Obsidian may disable them by default)
+      checkbox.removeAttribute("disabled");
+      checkbox.style.cursor = "pointer";
+
+      checkbox.addEventListener("change", () => {
+        const isChecked = checkbox.checked;
+
+        // Get the task text from the parent list item
+        const listItem = checkbox.closest("li");
+        if (!listItem) return;
+
+        // Get text content, excluding the checkbox itself
+        const taskText = this.getTaskText(listItem);
+        if (!taskText) return;
+
+        // Update the message content
+        this.updateCheckboxInMessage(msg, taskText, isChecked);
+
+        // Notify the LLM about the change
+        this.notifyCheckboxChange(taskText, isChecked);
+      });
+    });
+  }
+
+  /**
+   * Extract task text from a list item, excluding checkbox
+   */
+  private getTaskText(listItem: HTMLElement): string {
+    // Clone the element to avoid modifying the DOM
+    const clone = listItem.cloneNode(true) as HTMLElement;
+
+    // Remove checkbox from clone
+    const checkbox = clone.querySelector('input[type="checkbox"]');
+    checkbox?.remove();
+
+    // Get text content and clean it up
+    return clone.textContent?.trim() ?? "";
+  }
+
+  /**
+   * Update a checkbox state in the message content
+   */
+  private updateCheckboxInMessage(msg: ConversationMessage, taskText: string, isChecked: boolean) {
+    const lines = msg.content.split("\n");
+    const escapedText = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // Match task list items: - [ ] text or - [x] text (case insensitive for x)
+    const uncheckedPattern = new RegExp(`^(\\s*[-*]\\s*)\\[ \\]\\s*${escapedText}`, "i");
+    const checkedPattern = new RegExp(`^(\\s*[-*]\\s*)\\[[xX]\\]\\s*${escapedText}`, "i");
+
+    for (let i = 0; i < lines.length; i++) {
+      if (isChecked && uncheckedPattern.test(lines[i])) {
+        // Change [ ] to [x]
+        lines[i] = lines[i].replace("[ ]", "[x]");
+        break;
+      } else if (!isChecked && checkedPattern.test(lines[i])) {
+        // Change [x] to [ ]
+        lines[i] = lines[i].replace(/\[[xX]\]/, "[ ]");
+        break;
+      }
+    }
+
+    msg.content = lines.join("\n");
+  }
+
+  /**
+   * Send a message to the LLM about a checkbox change
+   */
+  private notifyCheckboxChange(taskText: string, isChecked: boolean) {
+    const action = isChecked ? "completed" : "uncompleted";
+    const message = `I ${action} the task: "${taskText}"`;
+
+    // Set the input and send
+    if (this.inputEl && !this.isLoading) {
+      this.inputEl.value = message;
+      this.sendMessage();
+    } else if (this.isLoading) {
+      // Queue the notification for when the current request finishes
+      new Notice(`Task ${action}: ${taskText}`);
+    }
   }
 
   /**
