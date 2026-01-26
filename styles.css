@@ -249,6 +249,16 @@
   background-color: var(--text-success);
 }
 
+.llm-status-indicator.connecting {
+  background-color: var(--text-warning);
+  animation: llm-status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes llm-status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 .llm-status-indicator.error {
   background-color: var(--text-error);
 }
@@ -260,6 +270,9 @@
   background-color: rgba(var(--color-red-rgb), 0.1);
   border-radius: 8px;
   margin-bottom: 10px;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* Empty state */

@@ -197,6 +197,29 @@ export default class LLMPlugin extends Plugin {
     if (leaf) {
       workspace.revealLeaf(leaf);
     }
+
+    return leaf;
+  }
+
+  /**
+   * Get the ChatView instance if it exists
+   */
+  getChatView(): ChatView | null {
+    const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+    if (leaves.length > 0) {
+      return leaves[0].view as ChatView;
+    }
+    return null;
+  }
+
+  /**
+   * Add a message exchange to the chat view
+   */
+  addToChatView(userMessage: string, assistantMessage: string, provider: LLMProvider) {
+    const chatView = this.getChatView();
+    if (chatView) {
+      chatView.addMessageExchange(userMessage, assistantMessage, provider);
+    }
   }
 
   async loadSettings() {
@@ -259,8 +282,9 @@ export default class LLMPlugin extends Plugin {
    * Update the status bar with current provider and model info
    * @param provider Optional provider to display (uses default if not specified)
    * @param actualModelName Optional actual model name from ACP session (overrides configured model display)
+   * @param status Optional status: "idle" (default), "connecting", "connected"
    */
-  updateStatusBar(provider?: LLMProvider, actualModelName?: string) {
+  updateStatusBar(provider?: LLMProvider, actualModelName?: string, status?: "idle" | "connecting" | "connected") {
     if (!this.statusBarEl) return;
 
     const displayProvider = provider ?? this.settings.defaultProvider;
@@ -279,7 +303,9 @@ export default class LLMPlugin extends Plugin {
 
     // Build status text with provider and model
     let statusText = providerNames[displayProvider] || displayProvider;
-    if (actualModelName) {
+    if (status === "connecting") {
+      statusText += " (connecting...)";
+    } else if (actualModelName) {
       // Use actual model name from ACP session
       statusText += ` (${this.formatModelName(actualModelName)})`;
     } else if (providerConfig?.model) {
@@ -295,8 +321,10 @@ export default class LLMPlugin extends Plugin {
       cls: "llm-status-text",
     });
 
-    // Check if provider is enabled
-    if (providerConfig?.enabled) {
+    // Set indicator state based on status
+    if (status === "connecting") {
+      indicator.addClass("connecting");
+    } else if (providerConfig?.enabled) {
       indicator.addClass("active");
     }
   }
@@ -305,7 +333,7 @@ export default class LLMPlugin extends Plugin {
    * Format model name for display (abbreviate long names)
    */
   private formatModelName(model: string): string {
-    // Common abbreviations
+    // Common abbreviations for model IDs
     const abbreviations: Record<string, string> = {
       "claude-3-5-haiku-latest": "haiku",
       "claude-3-5-sonnet-latest": "sonnet-3.5",
@@ -323,8 +351,33 @@ export default class LLMPlugin extends Plugin {
       "gpt-5": "5",
       "claude-sonnet": "sonnet",
       "claude-haiku": "haiku",
+      // ACP display names (from Claude ACP adapter)
+      "default": "opus",
+      "Default (recommended)": "opus",
+      "Sonnet": "sonnet",
+      "Haiku": "haiku",
     };
 
-    return abbreviations[model] || model;
+    // Check for exact match first
+    if (abbreviations[model]) {
+      return abbreviations[model];
+    }
+
+    // Try case-insensitive match
+    const lowerModel = model.toLowerCase();
+    for (const [key, value] of Object.entries(abbreviations)) {
+      if (key.toLowerCase() === lowerModel) {
+        return value;
+      }
+    }
+
+    // If model name is long, try to extract a shorter name
+    // Remove text in parentheses and trim
+    const simplified = model.replace(/\s*\([^)]*\)\s*/g, "").trim();
+    if (simplified !== model && simplified.length > 0) {
+      return this.formatModelName(simplified);
+    }
+
+    return model;
   }
 }

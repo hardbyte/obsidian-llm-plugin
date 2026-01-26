@@ -186,6 +186,9 @@ export class QuickPromptModal extends Modal {
 
     this.setLoading(true);
 
+    // Store original user prompt (without prefix/system prompt) for chat history
+    const originalPrompt = this.inputEl.value.trim();
+
     try {
       const response = await this.executor.execute(prompt, this.currentProvider);
 
@@ -194,6 +197,9 @@ export class QuickPromptModal extends Modal {
       } else {
         this.lastResponse = response.content;
         this.showResponse(response.content, false);
+
+        // Add to chat view if it exists
+        this.plugin.addToChatView(originalPrompt, response.content, this.currentProvider);
       }
     } catch (error) {
       this.showResponse(

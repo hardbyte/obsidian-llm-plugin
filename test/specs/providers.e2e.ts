@@ -1020,10 +1020,19 @@ describe("ACP Mode Tests @acp @provider", () => {
 
     // Open chat
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
 
     const chatView = await browser.$(".llm-chat-view");
     expect(await chatView.isExisting()).toBe(true);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
 
     // Send a simple message
     const input = await browser.$(".llm-chat-input");
@@ -1078,7 +1087,16 @@ describe("ACP Mode Tests @acp @provider", () => {
 
     // Open chat and send a message
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
 
     const input = await browser.$(".llm-chat-input");
     await input.click();
@@ -1132,7 +1150,16 @@ describe("ACP Mode Tests @acp @provider", () => {
     await browser.pause(200);
 
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
 
     const input = await browser.$(".llm-chat-input");
     await input.click();
@@ -1181,7 +1208,16 @@ describe("ACP Mode Tests @acp @provider", () => {
     await browser.pause(200);
 
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
 
     const input = await browser.$(".llm-chat-input");
     await input.click();
@@ -1225,9 +1261,18 @@ describe("ACP Mode Tests @acp @provider", () => {
     await enableAcpMode(provider);
 
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
 
-    // First message (includes connection time)
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    // First message (connection already complete)
     const startTime1 = Date.now();
 
     let input = await browser.$(".llm-chat-input");
@@ -1329,7 +1374,16 @@ describe("ACP Mode Tests @acp @provider", () => {
 
     // Open chat and send a message to trigger ACP connection
     await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
-    await browser.pause(500);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
 
     const input = await browser.$(".llm-chat-input");
     await input.click();

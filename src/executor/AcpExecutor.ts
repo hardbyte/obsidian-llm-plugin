@@ -127,6 +127,7 @@ export class AcpExecutor {
   private progressCallback: ((event: ProgressEvent) => void) | null = null;
   private configOptions: SessionConfigOption[] = [];
   private modelState: SessionModelState | null = null;
+  private accumulatedContent: string = ""; // Accumulate text content during prompt
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
@@ -187,10 +188,12 @@ export class AcpExecutor {
     this.debug("Spawning ACP agent:", acpCommand.cmd, acpCommand.args, "cwd:", cwd);
 
     // Spawn the ACP agent process
+    // Use shell: true to ensure commands like npx are found via shell PATH
     this.process = spawn(acpCommand.cmd, acpCommand.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
+      shell: true,
     });
 
     if (!this.process.stdin || !this.process.stdout) {
@@ -205,10 +208,20 @@ export class AcpExecutor {
       this.debug("Agent stderr:", text);
     });
 
+    // Track initialization state to handle process exits appropriately
+    let initializationComplete = false;
+
     // Create a promise that rejects if the process exits during initialization
     let processExitReject: ((err: Error) => void) | null = null;
     const processExitPromise = new Promise<never>((_, reject) => {
       processExitReject = reject;
+    });
+
+    // Create a timeout promise for slow-starting processes (like npx)
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("ACP connection timeout - agent took too long to respond"));
+      }, 30000); // 30 second timeout for initialization
     });
 
     this.process.on("error", (err) => {
@@ -219,16 +232,22 @@ export class AcpExecutor {
     });
 
     this.process.on("exit", (code, signal) => {
-      this.debug("Agent process exited:", code, signal);
-      this.connection = null;
-      this.process = null;
-      this.sessionId = null;
-      this.configOptions = [];
-      this.modelState = null;
-      if (processExitReject) {
-        const reason = stderrOutput.trim() || `exit code ${code}${signal ? `, signal ${signal}` : ""}`;
-        processExitReject(new Error(`ACP process exited: ${reason}`));
+      this.debug("Agent process exited:", code, signal, "initComplete:", initializationComplete);
+
+      // Only clear state during initialization phase
+      // After initialization, let isConnected() detect exit via exitCode
+      if (!initializationComplete) {
+        this.connection = null;
+        this.process = null;
+        this.sessionId = null;
+        this.configOptions = [];
+        this.modelState = null;
+        if (processExitReject) {
+          const reason = stderrOutput.trim() || `exit code ${code}${signal ? `, signal ${signal}` : ""}`;
+          processExitReject(new Error(`ACP process exited: ${reason}`));
+        }
       }
+      // After initialization, keep state intact so isConnected() can use exitCode
     });
 
     // Create the ACP stream from stdio
@@ -265,7 +284,7 @@ export class AcpExecutor {
     this.connection = new ClientSideConnection(createClient, stream);
     this.currentProvider = provider;
 
-    // Initialize the connection - race against process exit
+    // Initialize the connection - race against process exit and timeout
     this.debug("Initializing ACP connection...");
     const initResponse = await Promise.race([
       this.connection.initialize({
@@ -277,11 +296,12 @@ export class AcpExecutor {
         clientCapabilities: {},
       }),
       processExitPromise,
+      timeoutPromise,
     ]);
 
     this.debug("ACP initialized:", initResponse);
 
-    // Create a new session - race against process exit
+    // Create a new session - race against process exit and timeout
     this.debug("Creating new session...");
     const sessionResponse = await Promise.race([
       this.connection.newSession({
@@ -289,10 +309,14 @@ export class AcpExecutor {
         mcpServers: [],
       }),
       processExitPromise,
+      timeoutPromise,
     ]);
 
     this.sessionId = sessionResponse.sessionId;
     this.debug("Session created:", this.sessionId);
+
+    // Mark initialization as complete - after this, exit handler won't clear state
+    initializationComplete = true;
 
     // Clear the exit rejection now that we're successfully connected
     // This prevents the rejection from being triggered on normal shutdown
@@ -343,24 +367,58 @@ export class AcpExecutor {
    * Handle session update notifications and convert to ProgressEvents
    */
   private handleSessionUpdate(update: SessionUpdate) {
-    if (!this.progressCallback) return;
+    this.debug("handleSessionUpdate:", update.sessionUpdate, JSON.stringify(update).slice(0, 200));
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
       case "user_message_chunk": {
         // ContentChunk has a single content block, not an array
-        const chunk = update as ContentChunk & { sessionUpdate: string };
-        if (chunk.content && chunk.content.type === "text") {
-          const textContent = chunk.content as { type: "text"; text: string };
-          this.progressCallback({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const chunk = update as any;
+        this.debug("Content chunk:", JSON.stringify(chunk));
+
+        // Try to extract text content - different providers may have different structures
+        let textToAdd = "";
+
+        // Standard ACP format: chunk.content.type === "text" with chunk.content.text
+        if (chunk.content && chunk.content.type === "text" && chunk.content.text) {
+          textToAdd = chunk.content.text;
+        }
+        // Alternative format: chunk.content is the text directly
+        else if (chunk.content && typeof chunk.content === "string") {
+          textToAdd = chunk.content;
+        }
+        // Alternative format: chunk.text directly
+        else if (chunk.text && typeof chunk.text === "string") {
+          textToAdd = chunk.text;
+        }
+        // Alternative format: content array (like in some ACP implementations)
+        else if (Array.isArray(chunk.content)) {
+          for (const item of chunk.content) {
+            if (item && item.type === "text" && item.text) {
+              textToAdd += item.text;
+            }
+          }
+        }
+
+        if (textToAdd) {
+          // Accumulate text content for the response (always, even without callback)
+          this.accumulatedContent += textToAdd;
+          this.debug("Accumulated content length:", this.accumulatedContent.length);
+
+          // Notify progress callback if available
+          this.progressCallback?.({
             type: "text",
-            content: textContent.text,
+            content: this.accumulatedContent, // Send cumulative content like CLI streaming
           });
+        } else {
+          this.debug("No text extracted from chunk");
         }
         break;
       }
 
       case "agent_thought_chunk": {
+        if (!this.progressCallback) break;
         const chunk = update as ContentChunk & { sessionUpdate: string };
         if (chunk.content && chunk.content.type === "text") {
           const textContent = chunk.content as { type: "text"; text: string };
@@ -373,13 +431,60 @@ export class AcpExecutor {
       }
 
       case "tool_call": {
-        // ToolCall has title and toolCallId, not name/arguments
+        if (!this.progressCallback) break;
+        // ToolCall has title, status, locations (file paths), and more
         const toolCall = update as ToolCall & { sessionUpdate: string };
+
+        // Extract file path from locations if available (useful for file operations)
+        let input: string | undefined;
+        if (toolCall.locations && toolCall.locations.length > 0) {
+          const loc = toolCall.locations[0];
+          input = loc.line ? `${loc.path}:${loc.line}` : loc.path;
+        }
+
+        // Map ACP status to our status type
+        let status: "started" | "completed" | undefined;
+        if (toolCall.status === "pending" || toolCall.status === "in_progress") {
+          status = "started";
+        } else if (toolCall.status === "completed" || toolCall.status === "failed") {
+          status = "completed";
+        }
+
         this.progressCallback({
           type: "tool_use",
           tool: toolCall.title ?? "unknown",
-          input: toolCall.toolCallId,
+          input,
+          status,
         });
+        break;
+      }
+
+      case "tool_call_update": {
+        if (!this.progressCallback) break;
+        // Handle tool call status updates
+        const toolUpdate = update as { toolCallId: string; status?: string; locations?: Array<{ path: string; line?: number | null }> };
+
+        // Extract file path from locations if available
+        let input: string | undefined;
+        if (toolUpdate.locations && toolUpdate.locations.length > 0) {
+          const loc = toolUpdate.locations[0];
+          input = loc.line ? `${loc.path}:${loc.line}` : loc.path;
+        }
+
+        // Map ACP status to our status type
+        let status: "started" | "completed" | undefined;
+        if (toolUpdate.status === "completed" || toolUpdate.status === "failed") {
+          status = "completed";
+        }
+
+        // Only emit if we have useful info to show
+        if (status === "completed") {
+          this.progressCallback({
+            type: "tool_use",
+            tool: input ?? toolUpdate.toolCallId,
+            status,
+          });
+        }
         break;
       }
 
@@ -395,9 +500,13 @@ export class AcpExecutor {
     message: string,
     options?: AcpExecutorOptions
   ): Promise<{ content: string; error?: string }> {
-    if (!this.connection || !this.sessionId) {
+    // Use isConnected() which also checks if the process is still running
+    if (!this.isConnected()) {
       throw new Error("Not connected to an ACP agent. Call connect() first.");
     }
+
+    // Reset accumulated content for this prompt
+    this.accumulatedContent = "";
 
     // Update progress callback if provided
     if (options?.onProgress) {
@@ -407,20 +516,21 @@ export class AcpExecutor {
     this.debug("Sending prompt:", message.slice(0, 100));
 
     try {
-      const response = await this.connection.prompt({
-        sessionId: this.sessionId,
+      // Non-null assertions are safe here because isConnected() returned true
+      const response = await this.connection!.prompt({
+        sessionId: this.sessionId!,
         prompt: [{ type: "text", text: message }],
       });
 
       this.debug("Prompt response:", response);
+      this.debug("Accumulated content length:", this.accumulatedContent.length);
 
-      // The response indicates completion - actual content comes via sessionUpdate
-      // Return empty content for now (content was streamed via callbacks)
-      return { content: "" };
+      // Return accumulated content from sessionUpdate callbacks
+      return { content: this.accumulatedContent };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       this.debug("Prompt error:", error);
-      return { content: "", error };
+      return { content: this.accumulatedContent, error };
     }
   }
 
