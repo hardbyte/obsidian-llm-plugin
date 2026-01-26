@@ -12,6 +12,57 @@ import { browser, expect } from "@wdio/globals";
  *   npm run wdio -- --mochaOpts.grep "^(?!.*@provider).*$"
  */
 
+// Fast models for testing each provider
+const FAST_MODELS = {
+  claude: "claude-3-5-haiku-latest",
+  gemini: "gemini-2.0-flash-lite",
+  opencode: "gpt-4o-mini",
+  codex: "gpt-5-nano",
+};
+
+/**
+ * Helper to configure a provider's model via plugin settings
+ */
+async function setProviderModel(provider: string, model: string): Promise<void> {
+  await browser.execute(
+    (p, m) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.[p]) {
+        plugin.settings.providers[p].model = m;
+        plugin.settings.providers[p].enabled = true;
+        plugin.saveSettings();
+      }
+    },
+    provider,
+    model
+  );
+  await browser.pause(200);
+}
+
+/**
+ * Helper to enable a provider
+ */
+async function enableProvider(provider: string): Promise<void> {
+  await browser.execute((p) => {
+    const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+    if (plugin?.settings?.providers?.[p]) {
+      plugin.settings.providers[p].enabled = true;
+      plugin.saveSettings();
+    }
+  }, provider);
+  await browser.pause(200);
+}
+
+/**
+ * Helper to get current model for a provider
+ */
+async function getProviderModel(provider: string): Promise<string | undefined> {
+  return await browser.execute((p) => {
+    const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+    return plugin?.settings?.providers?.[p]?.model;
+  }, provider);
+}
+
 describe("Provider Tests @provider", () => {
   before(async () => {
     // Wait for workspace to be ready
@@ -26,6 +77,11 @@ describe("Provider Tests @provider", () => {
   });
 
   describe("Claude Provider @claude @provider", () => {
+    before(async () => {
+      // Configure Claude with fast model for testing
+      await setProviderModel("claude", FAST_MODELS.claude);
+    });
+
     beforeEach(async () => {
       await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
       await browser.pause(1000);
@@ -52,6 +108,11 @@ describe("Provider Tests @provider", () => {
         async (opt) => (await opt.getValue()) === "claude"
       );
       expect(claudeOption).toBeDefined();
+    });
+
+    it("should have fast model configured", async () => {
+      const model = await getProviderModel("claude");
+      expect(model).toBe(FAST_MODELS.claude);
     });
 
     it("should send message and receive response @slow", async () => {
@@ -112,6 +173,11 @@ describe("Provider Tests @provider", () => {
   });
 
   describe("Gemini Provider @gemini @provider", () => {
+    before(async () => {
+      // Enable and configure Gemini with fast model
+      await setProviderModel("gemini", FAST_MODELS.gemini);
+    });
+
     beforeEach(async () => {
       await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
       await browser.pause(1000);
@@ -127,11 +193,11 @@ describe("Provider Tests @provider", () => {
       await browser.pause(200);
     });
 
-    it("should be able to select Gemini provider if enabled", async () => {
+    it("should be able to select Gemini provider when enabled", async () => {
       const dropdown = await browser.$(".llm-provider-selector select");
       await expect(dropdown).toExist();
 
-      // Check if Gemini is an option (it may not be if disabled in settings)
+      // Check if Gemini is an option
       const options = await dropdown.$$("option");
       let hasGemini = false;
       for (const opt of options) {
@@ -141,11 +207,133 @@ describe("Provider Tests @provider", () => {
         }
       }
 
-      // This test passes either way - just checking the selector works
-      if (hasGemini) {
-        await dropdown.selectByAttribute("value", "gemini");
-        await browser.pause(200);
+      expect(hasGemini).toBe(true);
+      await dropdown.selectByAttribute("value", "gemini");
+      await browser.pause(200);
+    });
+
+    it("should have fast model configured", async () => {
+      const model = await getProviderModel("gemini");
+      expect(model).toBe(FAST_MODELS.gemini);
+    });
+
+    it("should send message and receive response @slow", async () => {
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "gemini");
+      await browser.pause(200);
+
+      const input = await browser.$(".llm-chat-input");
+      await input.click();
+      await input.setValue("Say 'hello' and nothing else.");
+
+      const sendBtn = await browser.$(".llm-chat-send");
+      await sendBtn.click();
+
+      await browser.pause(500);
+      const userMessage = await browser.$(".llm-message-user");
+      await expect(userMessage).toExist();
+
+      await browser.waitUntil(
+        async () => {
+          const assistantMessage = await browser.$(".llm-message-assistant");
+          return assistantMessage.isExisting();
+        },
+        { timeout: 60000, timeoutMsg: "No response from Gemini within timeout" }
+      );
+
+      const assistantMessage = await browser.$(".llm-message-assistant");
+      await expect(assistantMessage).toExist();
+    });
+  });
+
+  describe("Model Switching Tests @models @provider", () => {
+    beforeEach(async () => {
+      await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+      await browser.pause(1000);
+    });
+
+    afterEach(async () => {
+      const cancelBtn = await browser.$(".llm-cancel-btn");
+      if (await cancelBtn.isExisting()) {
+        await cancelBtn.click();
+        await browser.pause(500);
       }
+      await browser.keys(["Escape"]);
+      await browser.pause(200);
+    });
+
+    it("should switch Claude model and verify setting persists", async () => {
+      // Set to sonnet first
+      await setProviderModel("claude", "claude-sonnet-4-20250514");
+      let model = await getProviderModel("claude");
+      expect(model).toBe("claude-sonnet-4-20250514");
+
+      // Switch to haiku
+      await setProviderModel("claude", "claude-3-5-haiku-latest");
+      model = await getProviderModel("claude");
+      expect(model).toBe("claude-3-5-haiku-latest");
+    });
+
+    it("should switch Gemini model and verify setting persists", async () => {
+      // Set to pro first
+      await setProviderModel("gemini", "gemini-2.5-pro");
+      let model = await getProviderModel("gemini");
+      expect(model).toBe("gemini-2.5-pro");
+
+      // Switch to flash
+      await setProviderModel("gemini", "gemini-2.5-flash");
+      model = await getProviderModel("gemini");
+      expect(model).toBe("gemini-2.5-flash");
+
+      // Switch to flash lite (fastest)
+      await setProviderModel("gemini", "gemini-2.0-flash-lite");
+      model = await getProviderModel("gemini");
+      expect(model).toBe("gemini-2.0-flash-lite");
+    });
+
+    it("should switch Codex model and verify setting persists", async () => {
+      await enableProvider("codex");
+
+      // Set to gpt-5
+      await setProviderModel("codex", "gpt-5");
+      let model = await getProviderModel("codex");
+      expect(model).toBe("gpt-5");
+
+      // Switch to gpt-5-mini
+      await setProviderModel("codex", "gpt-5-mini");
+      model = await getProviderModel("codex");
+      expect(model).toBe("gpt-5-mini");
+
+      // Switch to gpt-5-nano (fastest)
+      await setProviderModel("codex", "gpt-5-nano");
+      model = await getProviderModel("codex");
+      expect(model).toBe("gpt-5-nano");
+    });
+
+    it("should switch OpenCode model and verify setting persists", async () => {
+      await enableProvider("opencode");
+
+      // Set to claude-sonnet
+      await setProviderModel("opencode", "claude-sonnet");
+      let model = await getProviderModel("opencode");
+      expect(model).toBe("claude-sonnet");
+
+      // Switch to gpt-4o-mini
+      await setProviderModel("opencode", "gpt-4o-mini");
+      model = await getProviderModel("opencode");
+      expect(model).toBe("gpt-4o-mini");
+    });
+
+    it("should clear model to use CLI default", async () => {
+      // Set a model first
+      await setProviderModel("claude", "claude-3-5-haiku-latest");
+      let model = await getProviderModel("claude");
+      expect(model).toBe("claude-3-5-haiku-latest");
+
+      // Clear to use default
+      await setProviderModel("claude", "");
+      model = await getProviderModel("claude");
+      expect(model).toBe("");
     });
   });
 
@@ -161,14 +349,13 @@ describe("Provider Tests @provider", () => {
       await browser.pause(300);
     });
 
-    it("should have model selection in provider settings", async () => {
-      // This would require navigating to plugin settings
-      // For now, just verify the settings modal opens
+    it("should navigate to plugin settings", async () => {
       await browser.executeObsidianCommand("app:open-settings");
       await browser.pause(500);
 
-      const settingsModal = await browser.$(".modal-container");
-      await expect(settingsModal).toExist();
+      // Click on Community plugins in the sidebar
+      const settingsSidebar = await browser.$(".vertical-tab-nav-item");
+      await expect(settingsSidebar).toExist();
 
       await browser.keys(["Escape"]);
       await browser.pause(300);
@@ -186,6 +373,9 @@ describe("Progress Indicators @progress @provider", () => {
       { timeout: 30000 }
     );
     await browser.pause(2000);
+
+    // Use fast model for progress tests
+    await setProviderModel("claude", FAST_MODELS.claude);
   });
 
   beforeEach(async () => {

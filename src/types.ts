@@ -35,6 +35,7 @@ export const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string
   gemini: [
     { value: "", label: "Default (CLI default)" },
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash (fast)" },
     { value: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash Lite (fastest)" },
   ],
@@ -47,8 +48,9 @@ export const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string
   ],
   codex: [
     { value: "", label: "Default (CLI default)" },
-    { value: "o3", label: "O3" },
-    { value: "o4-mini", label: "O4 Mini (fast)" },
+    { value: "gpt-5", label: "GPT-5" },
+    { value: "gpt-5-mini", label: "GPT-5 Mini (fast)" },
+    { value: "gpt-5-nano", label: "GPT-5 Nano (fastest)" },
     { value: "gpt-4.1", label: "GPT-4.1" },
   ],
 };
