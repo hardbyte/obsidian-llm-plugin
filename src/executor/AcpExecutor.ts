@@ -224,6 +224,22 @@ export class AcpExecutor {
 
     this.sessionId = sessionResponse.sessionId;
     this.debug("Session created:", this.sessionId);
+
+    // Set model if configured
+    const providerConfig = this.settings.providers[provider];
+    if (providerConfig.model) {
+      this.debug("Setting model:", providerConfig.model);
+      try {
+        await this.connection.unstable_setSessionModel({
+          sessionId: this.sessionId,
+          modelId: providerConfig.model,
+        });
+        this.debug("Model set successfully");
+      } catch (err) {
+        // Model selection is experimental - log but don't fail
+        this.debug("Failed to set model (may not be supported):", err);
+      }
+    }
   }
 
   /**

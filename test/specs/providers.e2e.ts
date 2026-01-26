@@ -1042,6 +1042,168 @@ describe("ACP Mode Tests @acp @provider", () => {
     await disableAcpMode("opencode");
   });
 
+  it("should use configured model with ACP @slow @acp-model", async () => {
+    // Enable ACP for OpenCode with a specific model
+    const testModel = "gpt-4o-mini";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.useAcp = true;
+        plugin.settings.providers.opencode.model = model;
+        plugin.settings.defaultProvider = "opencode";
+        plugin.settings.debugMode = true; // Enable debug to see model selection
+        plugin.saveSettings();
+      }
+    }, testModel);
+    await browser.pause(200);
+
+    // Verify model is set
+    const configuredModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.model;
+    });
+    expect(configuredModel).toBe(testModel);
+
+    // Open chat and send a message
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+    await browser.pause(500);
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("What model are you? Reply with just your model name.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    // Wait for response
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 60000, timeoutMsg: "No response from ACP agent" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Model response:", responseText);
+    console.log("Configured model:", testModel);
+
+    // The response should mention something about GPT-4 or the model
+    // (exact response depends on what the model says about itself)
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.useAcp = false;
+        plugin.settings.providers.opencode.model = "";
+        plugin.settings.debugMode = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should work with Claude ACP @slow @acp-claude", async () => {
+    // Test Claude via ACP adapter (@zed-industries/claude-code-acp)
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.enabled = true;
+        plugin.settings.providers.claude.useAcp = true;
+        plugin.settings.providers.claude.model = "claude-3-5-haiku-latest";
+        plugin.settings.defaultProvider = "claude";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+    await browser.pause(500);
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'Claude ACP works' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 90000, timeoutMsg: "No response from Claude ACP" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Claude ACP response:", responseText);
+
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should work with Gemini ACP @slow @acp-gemini", async () => {
+    // Test Gemini with --experimental-acp flag
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.gemini) {
+        plugin.settings.providers.gemini.enabled = true;
+        plugin.settings.providers.gemini.useAcp = true;
+        plugin.settings.providers.gemini.yoloMode = true;
+        plugin.settings.providers.gemini.model = "gemini-2.5-flash";
+        plugin.settings.defaultProvider = "gemini";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+    await browser.pause(500);
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'Gemini ACP works' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 90000, timeoutMsg: "No response from Gemini ACP" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Gemini ACP response:", responseText);
+
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.gemini) {
+        plugin.settings.providers.gemini.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
   it("should measure ACP connection reuse @slow @acp-benchmark", async () => {
     // This test measures if ACP connection reuse is working
     // The second message should be faster than the first (no connection overhead)
