@@ -542,6 +542,25 @@ export class LLMExecutor {
       defaultCmd.push("--dangerously-skip-permissions");
     }
 
+    // Add model flag if specified
+    if (config.model) {
+      this.debug(`Using model for ${provider}:`, config.model);
+      switch (provider) {
+        case "claude":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "gemini":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "opencode":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "codex":
+          defaultCmd.push("--model", config.model);
+          break;
+      }
+    }
+
     // Add session continuation flags per provider
     const sessionId = this.sessionIds[provider];
     if (sessionId) {

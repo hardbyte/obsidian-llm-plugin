@@ -31,3 +31,4 @@ test/vault/.obsidian/hotkeys.json
 test/vault/.obsidian/appearance.json
 test/vault/.trash/
 .wdio-obsidian/
+.obsidian-cache/

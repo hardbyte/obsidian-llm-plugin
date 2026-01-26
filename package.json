@@ -7,6 +7,10 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test:e2e": "npm run build && wdio run ./wdio.conf.ts",
+    "test:e2e:fast": "npm run build && wdio run ./wdio.conf.ts --spec test/specs/plugin.e2e.ts",
+    "test:e2e:claude": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @claude",
+    "test:e2e:gemini": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @gemini",
+    "test:e2e:providers": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @provider",
     "wdio": "wdio run ./wdio.conf.ts"
   },
   "keywords": [

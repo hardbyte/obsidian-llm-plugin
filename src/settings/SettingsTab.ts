@@ -1,6 +1,7 @@
 import { App, FuzzySuggestModal, PluginSettingTab, Setting, TFile } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider } from "../types";
+import { PROVIDER_MODELS } from "../types";
 
 /**
  * Modal for selecting a markdown file from the vault
@@ -221,6 +222,22 @@ export class LLMSettingTab extends PluginSettingTab {
         toggle.setValue(providerConfig.enabled);
         toggle.onChange(async (value) => {
           this.plugin.settings.providers[provider].enabled = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    // Model selection
+    const modelOptions = PROVIDER_MODELS[provider];
+    new Setting(settingsContainer)
+      .setName("Model")
+      .setDesc("Select which model to use for this provider")
+      .addDropdown((dropdown) => {
+        modelOptions.forEach((option) => {
+          dropdown.addOption(option.value, option.label);
+        });
+        dropdown.setValue(providerConfig.model ?? "");
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.providers[provider].model = value || undefined;
           await this.plugin.saveSettings();
         });
       });
