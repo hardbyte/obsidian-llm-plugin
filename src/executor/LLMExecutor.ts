@@ -708,8 +708,11 @@ export class LLMExecutor {
         // OpenCode skill calls have "name" in input
         if (input.name) {
           inputSummary = input.name as string;
-        } else if (input.file_path || input.path || input.file) {
-          inputSummary = (input.file_path || input.path || input.file) as string;
+        } else if (input.filePath || input.file_path || input.path || input.file) {
+          // OpenCode uses camelCase filePath
+          const fullPath = (input.filePath || input.file_path || input.path || input.file) as string;
+          // Show just the filename for brevity
+          inputSummary = fullPath.split("/").pop() || fullPath;
         } else if (input.pattern || input.glob) {
           inputSummary = (input.pattern || input.glob) as string;
         } else if (input.command || input.cmd) {
