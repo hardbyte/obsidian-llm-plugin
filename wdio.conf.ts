@@ -1,4 +1,8 @@
 import type { ObsidianServiceOptions } from "wdio-obsidian-service";
+import * as path from "path";
+
+const pluginDir = path.resolve(__dirname);
+const vaultDir = path.resolve(__dirname, "test/vault");
 
 export const config: WebdriverIO.Config = {
   //
@@ -6,8 +10,6 @@ export const config: WebdriverIO.Config = {
   // Runner Configuration
   // ====================
   runner: "local",
-  // Note: tsConfigPath removed as it causes issues with obsidian-launcher
-  // Test files are compiled via tsx which auto-discovers tsconfig
 
   //
   // ==================
@@ -24,7 +26,12 @@ export const config: WebdriverIO.Config = {
   capabilities: [
     {
       browserName: "obsidian",
-    },
+      // Open the test vault
+      "wdio:obsidianOptions": {
+        vault: vaultDir,
+        plugins: [pluginDir],
+      },
+    } as WebdriverIO.Capabilities,
   ],
 
   //
@@ -44,12 +51,7 @@ export const config: WebdriverIO.Config = {
     [
       "obsidian",
       {
-        // Path to the built plugin (will be installed into test vault)
-        pluginDir: ".",
-        // Path to test vault (will be created if it doesn't exist)
-        vaultDir: "./test/vault",
-        // Obsidian version to test against (default: latest)
-        // obsidianVersion: "latest",
+        // Service options
       } as ObsidianServiceOptions,
     ],
   ],
