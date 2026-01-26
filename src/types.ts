@@ -30,7 +30,7 @@ export interface ProviderConfig {
 /**
  * Providers that support ACP (Agent Client Protocol)
  */
-export const ACP_SUPPORTED_PROVIDERS: LLMProvider[] = ["claude", "opencode", "gemini"];
+export const ACP_SUPPORTED_PROVIDERS: LLMProvider[] = ["claude", "opencode", "gemini", "codex"];
 
 /**
  * Common model options per provider
@@ -39,11 +39,10 @@ export const ACP_SUPPORTED_PROVIDERS: LLMProvider[] = ["claude", "opencode", "ge
 export const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string }[]> = {
   claude: [
     { value: "", label: "Default (CLI default)" },
-    { value: "claude-opus-4-5-20251101", label: "Claude 4.5 Opus (most capable)" },
-    { value: "claude-sonnet-4-5-20250929", label: "Claude 4.5 Sonnet" },
-    { value: "claude-haiku-4-5-20251001", label: "Claude 4.5 Haiku (fast)" },
-    { value: "claude-sonnet-4-20250514", label: "Claude 4 Sonnet" },
-    { value: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet" },
+    { value: "claude-opus-4-5", label: "Claude 4.5 Opus (latest)" },
+    { value: "claude-sonnet-4-5", label: "Claude 4.5 Sonnet (latest)" },
+    { value: "claude-haiku-4-5", label: "Claude 4.5 Haiku (latest, fast)" },
+    { value: "claude-sonnet-4", label: "Claude 4 Sonnet (latest)" },
   ],
   gemini: [
     { value: "", label: "Default (CLI default)" },

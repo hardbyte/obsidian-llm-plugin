@@ -42,6 +42,7 @@ export class ChatView extends ItemView {
   private toolHistory: string[] = [];
   private recentStatuses: string[] = [];
   private hasActiveSession = false; // Track if we have an active Claude session
+  private acpConnectionPromise: Promise<void> | null = null; // Track in-flight ACP connection
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -467,38 +468,63 @@ export class ChatView extends ItemView {
    * Eagerly connect to ACP if enabled for the current provider.
    * This is called when the view opens and when the provider changes.
    * Blocks user input while connecting.
+   * Tracks in-flight connections to prevent overlapping connect/disconnect calls.
    */
-  private async connectAcpIfEnabled(): Promise<void> {
-    const providerConfig = this.plugin.settings.providers[this.currentProvider];
-    const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(this.currentProvider);
+  private connectAcpIfEnabled(): void {
+    // Store the target provider at call time to detect if it changes during async operations
+    const targetProvider = this.currentProvider;
+    const providerConfig = this.plugin.settings.providers[targetProvider];
+    const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(targetProvider);
 
     if (!useAcp) {
       // Not using ACP - make sure status bar shows configured model (not stale ACP model)
-      this.plugin.updateStatusBar(this.currentProvider);
+      this.plugin.updateStatusBar(targetProvider);
       return;
     }
 
     // Don't reconnect if already connected to this provider
-    if (this.acpExecutor.isConnected() && this.acpExecutor.getProvider() === this.currentProvider) {
+    if (this.acpExecutor.isConnected() && this.acpExecutor.getProvider() === targetProvider) {
       // Already connected - just update the status bar with model info
       const currentModel = this.acpExecutor.getCurrentModel();
       if (currentModel) {
-        this.plugin.updateStatusBar(this.currentProvider, currentModel.name);
+        this.plugin.updateStatusBar(targetProvider, currentModel.name);
       }
       return;
     }
 
+    // If there's already a connection in progress, let it complete
+    // The caller can await acpConnectionPromise if needed
+    if (this.acpConnectionPromise) {
+      return;
+    }
+
+    // Start the connection and track the promise
+    this.acpConnectionPromise = this.doConnectAcp(targetProvider);
+  }
+
+  /**
+   * Internal method that performs the actual ACP connection.
+   * Separated to allow tracking the promise.
+   */
+  private async doConnectAcp(targetProvider: LLMProvider): Promise<void> {
     // Get vault path for working directory
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
 
     // Block user input while connecting
     this.setLoading(true);
-    this.plugin.updateStatusBar(this.currentProvider, undefined, "connecting");
-    this.handleProgressEvent({ type: "status", message: `Connecting to ${this.currentProvider} ACP...` });
+    this.plugin.updateStatusBar(targetProvider, undefined, "connecting");
+    this.handleProgressEvent({ type: "status", message: `Connecting to ${targetProvider} ACP...` });
 
     try {
-      await this.acpExecutor.connect(this.currentProvider, vaultPath);
+      await this.acpExecutor.connect(targetProvider, vaultPath);
+
+      // Check if provider changed while we were connecting
+      if (this.currentProvider !== targetProvider) {
+        // Provider changed - disconnect and let the new provider connect
+        await this.acpExecutor.disconnect();
+        return;
+      }
 
       // Verify connection succeeded
       if (!this.acpExecutor.isConnected()) {
@@ -508,9 +534,9 @@ export class ChatView extends ItemView {
       // Update status bar with actual model from ACP session
       const currentModel = this.acpExecutor.getCurrentModel();
       if (currentModel) {
-        this.plugin.updateStatusBar(this.currentProvider, currentModel.name, "connected");
+        this.plugin.updateStatusBar(targetProvider, currentModel.name, "connected");
       } else {
-        this.plugin.updateStatusBar(this.currentProvider, undefined, "connected");
+        this.plugin.updateStatusBar(targetProvider, undefined, "connected");
       }
 
       // Clear the connecting status
@@ -523,8 +549,8 @@ export class ChatView extends ItemView {
       // Ensure we disconnect to clean up any partial state
       await this.acpExecutor.disconnect();
 
-      // Reset status bar to idle state
-      this.plugin.updateStatusBar(this.currentProvider, undefined, "idle");
+      // Reset status bar to idle state (use targetProvider since that's what we tried to connect)
+      this.plugin.updateStatusBar(targetProvider, undefined, "idle");
 
       // Show error notification
       new Notice(`ACP connection failed: ${errorMsg.slice(0, 100)}`, 5000);
@@ -532,6 +558,8 @@ export class ChatView extends ItemView {
       this.clearProgress();
     } finally {
       this.setLoading(false);
+      // Clear the connection promise so future connects can proceed
+      this.acpConnectionPromise = null;
     }
   }
 

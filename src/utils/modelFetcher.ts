@@ -17,6 +17,43 @@ export interface ModelOption {
 const modelCache: Map<LLMProvider, { models: ModelOption[]; timestamp: number }> = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// ACP models cache - populated when ACP connects, preferred over CLI/static models
+const acpModelCache: Map<LLMProvider, ModelOption[]> = new Map();
+
+/**
+ * Set ACP models for a provider (called when ACP connects)
+ * These are preferred over static/CLI models when available
+ */
+export function setAcpModels(
+  provider: LLMProvider,
+  models: Array<{ modelId: string; name: string; description?: string | null }>
+): void {
+  const options: ModelOption[] = [{ value: "", label: "Default (ACP default)" }];
+
+  for (const model of models) {
+    options.push({
+      value: model.modelId,
+      label: model.name || model.modelId,
+    });
+  }
+
+  acpModelCache.set(provider, options);
+}
+
+/**
+ * Clear ACP models for a provider (called when ACP disconnects)
+ */
+export function clearAcpModels(provider: LLMProvider): void {
+  acpModelCache.delete(provider);
+}
+
+/**
+ * Check if ACP models are available for a provider
+ */
+export function hasAcpModels(provider: LLMProvider): boolean {
+  return acpModelCache.has(provider);
+}
+
 /**
  * Get models for OpenCode by calling `opencode models`
  */
@@ -75,10 +112,16 @@ async function fetchCodexModels(): Promise<ModelOption[]> {
 
 /**
  * Fetch available models for a provider
- * Uses caching to avoid repeated CLI calls
+ * Prefers ACP models if available, otherwise uses CLI/static models
  */
 export async function fetchModelsForProvider(provider: LLMProvider): Promise<ModelOption[]> {
-  // Check cache first
+  // Prefer ACP models if available (more accurate when connected)
+  const acpModels = acpModelCache.get(provider);
+  if (acpModels && acpModels.length > 1) {
+    return acpModels;
+  }
+
+  // Check CLI cache
   const cached = modelCache.get(provider);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.models;
@@ -113,4 +156,12 @@ export async function fetchModelsForProvider(provider: LLMProvider): Promise<Mod
  */
 export function clearModelCache(): void {
   modelCache.clear();
+}
+
+/**
+ * Clear all caches (both CLI and ACP)
+ */
+export function clearAllModelCaches(): void {
+  modelCache.clear();
+  acpModelCache.clear();
 }

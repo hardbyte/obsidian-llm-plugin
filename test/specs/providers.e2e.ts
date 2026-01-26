@@ -922,6 +922,7 @@ describe("ACP Mode Tests @acp @provider", () => {
 
   /**
    * Helper to enable ACP mode for a provider
+   * Clears any existing model to use ACP's default model selection
    */
   async function enableAcpMode(provider: string): Promise<void> {
     await browser.execute((p) => {
@@ -929,6 +930,10 @@ describe("ACP Mode Tests @acp @provider", () => {
       if (plugin?.settings?.providers?.[p]) {
         plugin.settings.providers[p].enabled = true;
         plugin.settings.providers[p].useAcp = true;
+        // Clear any existing model to use ACP's default - important because
+        // invalid model formats (e.g. "gpt-4o-mini" vs "github-copilot/gpt-4o")
+        // can cause OpenCode ACP to return empty responses
+        plugin.settings.providers[p].model = "";
         plugin.settings.defaultProvider = p;
         plugin.saveSettings();
       }
@@ -1063,7 +1068,8 @@ describe("ACP Mode Tests @acp @provider", () => {
 
   it("should use configured model with ACP @slow @acp-model", async () => {
     // Enable ACP for OpenCode with a specific model
-    const testModel = "gpt-4o-mini";
+    // Must use OpenCode's model format: "opencode/model" or "github-copilot/model"
+    const testModel = "opencode/gpt-5-nano";
 
     await browser.execute((model) => {
       const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];

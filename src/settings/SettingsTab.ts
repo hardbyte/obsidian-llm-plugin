@@ -258,21 +258,10 @@ export class LLMSettingTab extends PluginSettingTab {
 
     // ACP mode for supported providers
     if (ACP_SUPPORTED_PROVIDERS.includes(provider)) {
-      new Setting(settingsContainer)
-        .setName("Use ACP Mode (Experimental)")
-        .setDesc("Use Agent Client Protocol for persistent connection. Faster for multiple messages but may be less stable.")
-        .addToggle((toggle) => {
-          toggle.setValue(providerConfig.useAcp ?? false);
-          toggle.onChange(async (value) => {
-            this.plugin.settings.providers[provider].useAcp = value;
-            await this.plugin.saveSettings();
-          });
-        });
-
-      // Thinking mode setting (only shown when ACP is enabled)
-      new Setting(settingsContainer)
+      // Create thinking mode setting first so we can reference it in ACP toggle
+      const thinkingModeSetting = new Setting(settingsContainer)
         .setName("Thinking Mode (ACP)")
-        .setDesc('Extended thinking level. Common values: "none", "low", "medium", "high". Leave empty for agent default. Only applies with ACP.')
+        .setDesc('Extended thinking level. Common values: "none", "low", "medium", "high". Leave empty for agent default.')
         .addText((text) => {
           text.setPlaceholder("Agent default");
           text.setValue(providerConfig.thinkingMode ?? "");
@@ -281,6 +270,26 @@ export class LLMSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
         });
+
+      // Initially show/hide based on current ACP setting
+      thinkingModeSetting.settingEl.style.display = providerConfig.useAcp ? "" : "none";
+
+      // ACP toggle - insert before thinking mode setting
+      const acpSetting = new Setting(settingsContainer)
+        .setName("Use ACP Mode (Experimental)")
+        .setDesc("Use Agent Client Protocol for persistent connection. Faster for multiple messages but may be less stable.")
+        .addToggle((toggle) => {
+          toggle.setValue(providerConfig.useAcp ?? false);
+          toggle.onChange(async (value) => {
+            this.plugin.settings.providers[provider].useAcp = value;
+            await this.plugin.saveSettings();
+            // Show/hide thinking mode setting based on ACP toggle
+            thinkingModeSetting.settingEl.style.display = value ? "" : "none";
+          });
+        });
+
+      // Move ACP setting before thinking mode setting in the DOM
+      settingsContainer.insertBefore(acpSetting.settingEl, thinkingModeSetting.settingEl);
     }
 
     // Timeout override (optional)
@@ -368,9 +377,10 @@ export class LLMSettingTab extends PluginSettingTab {
         }
       });
 
-      // Fetch dynamic models in the background
-      if (provider === "opencode") {
-        this.fetchAndUpdateModels(dd, provider, currentValue, isCustomMode);
+      // Fetch dynamic models in the background for all ACP-supported providers
+      // ACP models will be preferred if available (cached when ACP connects)
+      if (ACP_SUPPORTED_PROVIDERS.includes(provider)) {
+        this.fetchAndUpdateModels(dd, provider);
       }
     });
 
@@ -428,14 +438,15 @@ export class LLMSettingTab extends PluginSettingTab {
   /**
    * Fetch models dynamically and update dropdown
    */
-  private async fetchAndUpdateModels(
-    dropdown: DropdownComponent,
-    provider: LLMProvider,
-    currentValue: string,
-    isCustomMode: boolean
-  ): Promise<void> {
+  private async fetchAndUpdateModels(dropdown: DropdownComponent, provider: LLMProvider): Promise<void> {
     try {
       const models = await fetchModelsForProvider(provider);
+
+      // Read the current value at update time (not from captured closure values)
+      // This avoids race conditions if user changed selection during fetch
+      const currentValue = this.plugin.settings.providers[provider].model ?? "";
+      const dropdownValue = dropdown.getValue();
+      const isCustomMode = dropdownValue === "__custom__";
 
       // Check if current value is in the new list
       const isInList = models.some((m) => m.value === currentValue);

@@ -22,6 +22,7 @@ import {
   type ModelInfo,
 } from "@agentclientprotocol/sdk";
 import type { LLMPluginSettings, LLMProvider, ProgressEvent } from "../types";
+import { setAcpModels, clearAcpModels } from "../utils/modelFetcher";
 
 export interface ThinkingOption {
   id: string;
@@ -76,21 +77,37 @@ function nodeToWebWritable(nodeStream: NodeJS.WritableStream): WritableStream<Ui
           return;
         }
 
+        // Track if promise is already settled to avoid double-resolve
+        let settled = false;
+        const safeResolve = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        const safeReject = (err: Error) => {
+          if (!settled) {
+            settled = true;
+            reject(err);
+          }
+        };
+
         try {
           const ok = nodeStream.write(chunk, (err) => {
             if (err) {
               streamClosed = true;
-              reject(err);
+              safeReject(err);
             } else {
-              resolve();
+              safeResolve();
             }
           });
           if (!ok) {
-            nodeStream.once("drain", resolve);
+            // Backpressure - wait for drain event
+            nodeStream.once("drain", safeResolve);
           }
         } catch (err) {
           streamClosed = true;
-          reject(err);
+          safeReject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
@@ -131,8 +148,9 @@ export class AcpExecutor {
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
+    // Use arrow function that reads from this.settings so debug mode reflects current settings
     this.debug = (...args: unknown[]) => {
-      if (settings.debugMode) {
+      if (this.settings.debugMode) {
         console.log("[AcpExecutor]", ...args);
       }
     };
@@ -144,22 +162,49 @@ export class AcpExecutor {
 
   /**
    * Get the ACP command for a provider
+   * Uses provider-specific settings (customCommand, additionalArgs) if configured
    */
-  private getAcpCommand(provider: LLMProvider): { cmd: string; args: string[] } | null {
+  private getAcpCommand(provider: LLMProvider): { cmd: string; args: string[]; env?: Record<string, string> } | null {
+    const providerConfig = this.settings.providers[provider];
+
+    // Get base command and args for each provider
+    let baseCmd: string;
+    let baseArgs: string[];
+
     switch (provider) {
       case "opencode":
-        return { cmd: "opencode", args: ["acp"] };
+        baseCmd = providerConfig.customCommand || "opencode";
+        baseArgs = ["acp"];
+        break;
       case "claude":
         // Claude uses the ACP adapter package
-        return { cmd: "npx", args: ["@zed-industries/claude-code-acp"] };
+        // Use -y flag to avoid interactive prompts from npx
+        baseCmd = "npx";
+        baseArgs = ["-y", "@zed-industries/claude-code-acp"];
+        break;
       case "gemini":
-        return { cmd: "gemini", args: ["--experimental-acp"] };
+        baseCmd = providerConfig.customCommand || "gemini";
+        baseArgs = ["--experimental-acp"];
+        break;
       case "codex":
-        // Codex doesn't have native ACP support yet
-        return null;
+        // Codex uses the ACP adapter package (like Claude)
+        // Use -y flag to avoid interactive prompts from npx
+        baseCmd = "npx";
+        baseArgs = ["-y", "@zed-industries/codex-acp"];
+        break;
       default:
         return null;
     }
+
+    // Add any additional args from provider config
+    if (providerConfig.additionalArgs) {
+      baseArgs.push(...providerConfig.additionalArgs);
+    }
+
+    // Include provider-specific environment variables
+    const env = providerConfig.envVars ? { ...providerConfig.envVars } : undefined;
+
+    return { cmd: baseCmd, args: baseArgs, env };
   }
 
   /**
@@ -186,13 +231,17 @@ export class AcpExecutor {
 
     const cwd = workingDirectory ?? process.cwd();
     this.debug("Spawning ACP agent:", acpCommand.cmd, acpCommand.args, "cwd:", cwd);
+    if (acpCommand.env) {
+      this.debug("With environment overrides:", Object.keys(acpCommand.env));
+    }
 
     // Spawn the ACP agent process
     // Use shell: true to ensure commands like npx are found via shell PATH
+    // Merge provider-specific env vars with process.env
     this.process = spawn(acpCommand.cmd, acpCommand.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      env: { ...process.env, ...acpCommand.env },
       shell: true,
     });
 
@@ -331,6 +380,9 @@ export class AcpExecutor {
     if (this.modelState) {
       this.debug("Current model:", this.modelState.currentModelId);
       this.debug("Available models:", this.modelState.availableModels.map((m) => m.modelId));
+
+      // Update the model fetcher cache with ACP models (preferred over static lists)
+      setAcpModels(provider, this.modelState.availableModels);
     }
 
     // Set model if configured
@@ -658,6 +710,11 @@ export class AcpExecutor {
    */
   async disconnect(): Promise<void> {
     this.debug("Disconnecting...");
+
+    // Clear ACP models cache for this provider
+    if (this.currentProvider) {
+      clearAcpModels(this.currentProvider);
+    }
 
     if (this.process) {
       this.process.kill();
