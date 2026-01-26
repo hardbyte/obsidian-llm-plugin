@@ -35,6 +35,8 @@ export class ChatView extends ItemView {
   private progressContainer: HTMLElement | null = null;
   private currentToolUse: string | null = null;
   private markdownComponents: Component[] = [];
+  private toolHistory: string[] = [];
+  private recentStatuses: string[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -492,15 +494,24 @@ export class ChatView extends ItemView {
         const toolDisplay = event.input
           ? `${event.tool}: ${event.input}`
           : event.tool;
+        // Add to tool history if not a duplicate of the last one
+        if (this.toolHistory[this.toolHistory.length - 1] !== toolDisplay) {
+          this.toolHistory.push(toolDisplay);
+        }
         this.updateProgressDisplay(toolDisplay, "tool");
         break;
       }
 
       case "thinking":
+        this.addRecentStatus("Thinking...");
         this.updateProgressDisplay("Thinking...", "thinking");
         break;
 
       case "status":
+        // Don't add "Processing..." to history, it's too generic
+        if (event.message !== "Processing...") {
+          this.addRecentStatus(event.message);
+        }
         this.updateProgressDisplay(event.message, "status");
         break;
 
@@ -511,15 +522,42 @@ export class ChatView extends ItemView {
   }
 
   /**
-   * Update the progress display
+   * Add a status to recent history (keep last 3)
+   */
+  private addRecentStatus(status: string) {
+    if (this.recentStatuses[this.recentStatuses.length - 1] !== status) {
+      this.recentStatuses.push(status);
+      if (this.recentStatuses.length > 3) {
+        this.recentStatuses.shift();
+      }
+    }
+  }
+
+  /**
+   * Update the progress display with tool history and current status
    */
   private updateProgressDisplay(message: string, type: "tool" | "thinking" | "status") {
     if (!this.progressContainer) return;
 
     this.progressContainer.empty();
 
-    const iconName = type === "tool" ? "wrench" : type === "thinking" ? "brain" : "loader";
+    // Show tool history if we have any
+    if (this.toolHistory.length > 0) {
+      const historyEl = this.progressContainer.createDiv({ cls: "llm-progress-history" });
+      const toolsEl = historyEl.createSpan({ cls: "llm-tool-history" });
 
+      // Show tools with checkmarks for completed ones, arrow for current
+      const historyDisplay = this.toolHistory.map((tool, i) => {
+        const isLast = i === this.toolHistory.length - 1;
+        const shortName = tool.split(":")[0]; // Just the tool name
+        return isLast ? shortName : `✓ ${shortName}`;
+      }).join(" → ");
+
+      toolsEl.setText(historyDisplay);
+    }
+
+    // Show current status
+    const iconName = type === "tool" ? "wrench" : type === "thinking" ? "brain" : "loader";
     const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
     const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
     setIcon(iconEl, iconName);
@@ -537,6 +575,8 @@ export class ChatView extends ItemView {
       this.progressContainer = null;
     }
     this.currentToolUse = null;
+    this.toolHistory = [];
+    this.recentStatuses = [];
   }
 
   private async buildContextPrompt(currentPrompt: string): Promise<string> {

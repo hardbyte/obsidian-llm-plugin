@@ -521,6 +521,20 @@
 /* Progress indicators */
 .llm-progress-container {
   margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.llm-progress-history {
+  padding: 4px 12px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+.llm-tool-history {
+  font-family: var(--font-monospace);
+  color: var(--text-accent);
 }
 
 .llm-progress {
