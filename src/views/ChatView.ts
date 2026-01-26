@@ -963,17 +963,16 @@ export class ChatView extends ItemView {
   /**
    * Send a message to the LLM about a checkbox change
    */
-  private notifyCheckboxChange(taskText: string, isChecked: boolean) {
-    const action = isChecked ? "completed" : "uncompleted";
-    const message = `I ${action} the task: "${taskText}"`;
+  private notifyCheckboxChange(itemText: string, isChecked: boolean) {
+    const action = isChecked ? "checked" : "unchecked";
+    const message = `[${action}: "${itemText}"]`;
 
     // Set the input and send
     if (this.inputEl && !this.isLoading) {
       this.inputEl.value = message;
       this.sendMessage();
     } else if (this.isLoading) {
-      // Queue the notification for when the current request finishes
-      new Notice(`Task ${action}: ${taskText}`);
+      new Notice(`${action}: ${itemText}`);
     }
   }
 
