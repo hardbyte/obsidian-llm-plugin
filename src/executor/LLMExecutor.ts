@@ -649,9 +649,17 @@ export class LLMExecutor {
       return { type: "status", message: "Processing..." };
     }
 
-    // Step finish - processing complete
+    // Step finish - can show token usage if available
     if (type === "step_finish") {
-      return null; // Don't show "complete" for every step
+      const tokens = part?.tokens as Record<string, unknown> | undefined;
+      if (tokens) {
+        const input = tokens.input as number | undefined;
+        const output = tokens.output as number | undefined;
+        if (input && output) {
+          return { type: "status", message: `Tokens: ${input} in / ${output} out` };
+        }
+      }
+      return null;
     }
 
     // Text output - check multiple possible locations for content
@@ -675,15 +683,21 @@ export class LLMExecutor {
       return { type: "status", message: "Thinking..." };
     }
 
-    // Tool use events - extract detailed information
+    // Tool use events - OpenCode structure: part.tool, part.state.input, part.state.status
     if (type === "tool_use" || type === "tool_call" || type === "tool_start") {
-      const toolName = (part?.name || part?.tool || obj.name || obj.tool) as string | undefined;
-      const input = (part?.input || obj.input) as Record<string, unknown> | undefined;
+      const toolName = (part?.tool || part?.name || obj.tool || obj.name) as string | undefined;
+      const state = part?.state as Record<string, unknown> | undefined;
+      const stateInput = state?.input as Record<string, unknown> | undefined;
+      const stateStatus = state?.status as string | undefined;
+      const input = (stateInput || part?.input || obj.input) as Record<string, unknown> | undefined;
 
-      // Extract meaningful info from tool input (like Claude does)
+      // Extract meaningful info from tool input
       let inputSummary: string | undefined;
       if (input) {
-        if (input.file_path || input.path || input.file) {
+        // OpenCode skill calls have "name" in input
+        if (input.name) {
+          inputSummary = input.name as string;
+        } else if (input.file_path || input.path || input.file) {
           inputSummary = (input.file_path || input.path || input.file) as string;
         } else if (input.pattern || input.glob) {
           inputSummary = (input.pattern || input.glob) as string;
@@ -696,22 +710,24 @@ export class LLMExecutor {
         }
       }
 
+      // If state shows completed, report as completed
+      const status = stateStatus === "completed" ? "completed" : "started";
+
       return {
         type: "tool_use",
         tool: toolName || "tool",
         input: inputSummary,
-        status: "started",
+        status,
       };
     }
 
     // Tool result - show completion with relevant info
     if (type === "tool_result" || type === "tool_end") {
-      const toolName = (part?.name || obj.name) as string | undefined;
-      const output = part?.output as string | undefined;
+      const toolName = (part?.tool || part?.name || obj.name) as string | undefined;
       if (toolName) {
-        return { type: "status", message: `${toolName} completed` };
+        return { type: "tool_use", tool: toolName, status: "completed" };
       }
-      return null; // Silent completion if no tool name
+      return null;
     }
 
     // Content block events (some LLMs use this pattern)
