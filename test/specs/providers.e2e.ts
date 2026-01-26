@@ -15,7 +15,7 @@ import { browser, expect } from "@wdio/globals";
 // Fast models for testing each provider
 const FAST_MODELS = {
   claude: "claude-3-5-haiku-latest",
-  gemini: "gemini-3.0-flash",
+  gemini: "gemini-3-flash-preview",  // Gemini 3 Flash (latest fast model)
   opencode: "gpt-4o-mini",
   codex: "gpt-5-nano",
 };
@@ -238,6 +238,16 @@ describe("Provider Tests @provider", () => {
       });
       await browser.pause(200);
 
+      // Enable debug mode for Gemini tests
+      await browser.execute(() => {
+        const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+        if (plugin?.settings) {
+          plugin.settings.debugMode = true;
+          plugin.saveSettings();
+        }
+      });
+      await browser.pause(200);
+
       // Enable and configure Gemini with fast model
       await setProviderModel("gemini", FAST_MODELS.gemini);
       // Give time for settings to save
@@ -292,6 +302,18 @@ describe("Provider Tests @provider", () => {
       await dropdown.selectByAttribute("value", "gemini");
       await browser.pause(200);
 
+      // Debug: Check current settings
+      const settings = await browser.execute(() => {
+        const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+        return {
+          geminiEnabled: plugin?.settings?.providers?.gemini?.enabled,
+          geminiModel: plugin?.settings?.providers?.gemini?.model,
+          geminiYolo: plugin?.settings?.providers?.gemini?.yoloMode,
+          debugMode: plugin?.settings?.debugMode,
+        };
+      });
+      console.log("Gemini settings:", JSON.stringify(settings));
+
       const input = await browser.$(".llm-chat-input");
       await input.click();
       await input.setValue("Say 'hello' and nothing else.");
@@ -303,26 +325,61 @@ describe("Provider Tests @provider", () => {
       const userMessage = await browser.$(".llm-message-user");
       await expect(userMessage).toExist();
 
-      // Wait for either a response or an error message (Gemini may not be configured)
+      // Debug: Check for loading state
+      console.log("Checking for loading/progress indicators...");
+
+      // Poll for various states with logging
+      let lastState = "";
       await browser.waitUntil(
         async () => {
           const assistantMessage = await browser.$(".llm-message-assistant");
           const errorMessage = await browser.$(".llm-error-message");
-          return assistantMessage.isExisting() || errorMessage.isExisting();
+          const loading = await browser.$(".llm-loading");
+          const progress = await browser.$(".llm-progress");
+          const cancelBtn = await browser.$(".llm-cancel-btn");
+
+          const currentState = JSON.stringify({
+            assistant: await assistantMessage.isExisting(),
+            error: await errorMessage.isExisting(),
+            loading: await loading.isExisting(),
+            progress: await progress.isExisting(),
+            cancel: await cancelBtn.isExisting(),
+          });
+
+          if (currentState !== lastState) {
+            console.log("State:", currentState);
+            lastState = currentState;
+          }
+
+          return (await assistantMessage.isExisting()) || (await errorMessage.isExisting());
         },
-        { timeout: 90000, timeoutMsg: "No response from Gemini within timeout" }
+        { timeout: 180000, interval: 2000, timeoutMsg: "No response from Gemini within 3 minutes" }
       );
+
+      // Get browser console logs
+      try {
+        const logs = await browser.getLogs("browser");
+        if (logs && logs.length > 0) {
+          console.log("=== Browser Console Logs ===");
+          for (const log of logs.slice(-30)) {
+            console.log(`[${log.level}] ${log.message}`);
+          }
+          console.log("=== End Browser Logs ===");
+        }
+      } catch (e) {
+        console.log("Could not get browser logs:", e);
+      }
 
       // Check what we got
       const assistantMessage = await browser.$(".llm-message-assistant");
       const errorMessage = await browser.$(".llm-error-message");
 
       if (await errorMessage.isExisting()) {
-        // Gemini might not be configured - test passes but logs warning
         const errorText = await errorMessage.getText();
-        console.log("Gemini test received error (may not be configured):", errorText);
-        // Still pass - we verified the error handling works
+        console.log("Gemini test received error:", errorText);
       } else {
+        const responseText = await assistantMessage.getText();
+        console.log("Gemini response:", responseText.slice(0, 200));
         await expect(assistantMessage).toExist();
       }
     });
