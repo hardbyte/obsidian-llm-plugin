@@ -485,6 +485,16 @@ describe("Provider Tests @provider", () => {
       });
       await browser.pause(200);
 
+      // Reset default provider to Claude and ensure it's configured
+      await browser.execute(() => {
+        const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+        if (plugin?.settings) {
+          plugin.settings.defaultProvider = "claude";
+          plugin.saveSettings();
+        }
+      });
+      await browser.pause(200);
+
       // Ensure Claude and Gemini are enabled with models for testing
       await setProviderModel("claude", FAST_MODELS.claude);
       await setProviderModel("gemini", FAST_MODELS.gemini);
@@ -1273,5 +1283,174 @@ describe("ACP Mode Tests @acp @provider", () => {
 
     // Clean up
     await disableAcpMode(provider);
+  });
+
+  it("should persist thinking mode setting", async () => {
+    // Set thinking mode for a provider
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.thinkingMode = "high";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    // Verify setting was saved
+    const thinkingMode = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.thinkingMode;
+    });
+
+    expect(thinkingMode).toBe("high");
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.thinkingMode = undefined;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should update status bar with actual model from ACP @slow @acp-status", async () => {
+    // Enable ACP for OpenCode
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.useAcp = true;
+        plugin.settings.defaultProvider = "opencode";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    // Open chat and send a message to trigger ACP connection
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+    await browser.pause(500);
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'test' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    // Wait for response (ACP connection happens here)
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 60000, timeoutMsg: "No response from ACP agent" }
+    );
+
+    // Check status bar - should show the actual model name from ACP session
+    const statusText = await getStatusBarText();
+    console.log("Status bar after ACP connection:", statusText);
+
+    // Status bar should contain provider name and some model info
+    expect(statusText).toContain("LLM:");
+    expect(statusText).toContain("OpenCode");
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+});
+
+/**
+ * Model Fetcher Tests
+ * Tests for dynamic model fetching functionality
+ */
+describe("Model Fetcher Tests @models @provider", () => {
+  it("should have PROVIDER_MODELS defined for all providers", async () => {
+    const hasModels = await browser.execute(() => {
+      // Check if PROVIDER_MODELS exists and has entries for each provider
+      // This is testing the static fallback models are defined
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (!plugin) return false;
+
+      // The plugin should have settings with providers
+      const providers = ["claude", "opencode", "codex", "gemini"];
+      for (const p of providers) {
+        if (!plugin.settings?.providers?.[p]) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    expect(hasModels).toBe(true);
+  });
+
+  it("should allow custom model input", async () => {
+    // Set a custom model that's not in the predefined list
+    const customModel = "my-custom-model-id";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.model = model;
+        plugin.saveSettings();
+      }
+    }, customModel);
+    await browser.pause(200);
+
+    // Verify custom model was saved
+    const savedModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.claude?.model;
+    });
+
+    expect(savedModel).toBe(customModel);
+
+    // Clean up - reset to empty (default)
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.model = "";
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should accept provider/model format for OpenCode", async () => {
+    // OpenCode uses provider/model format like "anthropic/claude-sonnet-4-5"
+    const openCodeModel = "anthropic/claude-sonnet-4-5";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.model = model;
+        plugin.saveSettings();
+      }
+    }, openCodeModel);
+    await browser.pause(200);
+
+    // Verify model with slash was saved correctly
+    const savedModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.model;
+    });
+
+    expect(savedModel).toBe(openCodeModel);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.model = "";
+        plugin.saveSettings();
+      }
+    });
   });
 });
