@@ -645,7 +645,7 @@ describe("Progress Indicators @progress @provider", () => {
     await browser.pause(200);
   });
 
-  it("should show loading state when sending message", async () => {
+  it("should show loading state when sending message @slow", async () => {
     const input = await browser.$(".llm-chat-input");
     await input.click();
     await input.setValue("Hello");
