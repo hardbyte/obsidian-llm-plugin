@@ -6,7 +6,8 @@ export const config: WebdriverIO.Config = {
   // Runner Configuration
   // ====================
   runner: "local",
-  tsConfigPath: "./test/tsconfig.json",
+  // Note: tsConfigPath removed as it causes issues with obsidian-launcher
+  // Test files are compiled via tsx which auto-discovers tsconfig
 
   //
   // ==================

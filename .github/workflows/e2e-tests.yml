@@ -27,11 +27,11 @@ jobs:
         run: npm run build
 
       # wdio-obsidian-service automatically downloads Obsidian
-      # but we need a display for the Electron app
-      - name: Setup virtual display
+      # but we need a display for the Electron app and 7z for extraction
+      - name: Setup virtual display and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb p7zip-full
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
