@@ -10,8 +10,10 @@ An Obsidian plugin that integrates with LLM CLI tools (Claude, Codex, OpenCode, 
 - **System Prompt from File** - Use a markdown file in your vault as the system prompt
 - **Progress Indicators** - See what the LLM is doing (reading files, searching, etc.)
 - **Markdown Rendering** - LLM responses rendered with full Obsidian markdown support, including internal links
+- **Interactive Elements** - Checkboxes and buttons in responses are interactive; the LLM is notified when you interact with them
 - **Create Notes from Responses** - Save LLM responses as new notes in your vault
 - **Quick Prompts** - Commands for summarizing, explaining, and improving selected text
+- **Session Continuation** - Follow-up messages use session resumption for faster responses
 
 ## Requirements
 
@@ -24,10 +26,21 @@ At least one LLM CLI tool must be installed and accessible in your PATH:
 
 ## Installation
 
+### Using BRAT (Recommended)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) (Beta Reviewers Auto-update Tool) is the easiest way to install and keep the plugin updated:
+
+1. Install the BRAT plugin from Obsidian's Community Plugins
+2. Open BRAT settings and click "Add Beta Plugin"
+3. Enter: `hardbyte/obsidian-llm-plugin`
+4. Enable the plugin in Community Plugins settings
+
+BRAT will automatically check for updates and notify you when new versions are available.
+
 ### Manual Installation
 
-1. Download the latest release from the releases page
-2. Extract to your vault's `.obsidian/plugins/obsidian-llm/` directory
+1. Download the latest release from the [releases page](https://github.com/hardbyte/obsidian-llm-plugin/releases)
+2. Extract `main.js`, `manifest.json`, and `styles.css` to your vault's `.obsidian/plugins/obsidian-llm/` directory
 3. Enable the plugin in Obsidian's Community Plugins settings
 
 ### Build from Source
@@ -39,7 +52,7 @@ npm install
 npm run build
 ```
 
-Copy `main.js`, `manifest.json`, and `styles.css` to your vault's plugins folder.
+Copy `main.js`, `manifest.json`, and `styles.css` to your vault's `.obsidian/plugins/obsidian-llm/` folder.
 
 ## Usage
 
@@ -125,18 +138,22 @@ This improves response times for follow-up messages. Clearing the conversation r
 
 ### Future Improvements
 
-**Long-lived CLI Process**: Currently each request spawns a new CLI process. A more efficient approach would be to keep a long-running process and communicate via stdin/stdout or a local socket. This would significantly improve response times, especially for OpenCode which has slow startup. Some CLI tools support this:
-- `opencode serve` / `opencode attach` - Headless server mode (preferred over `--resume` for performance)
+**ACP (Agent Client Protocol)**: We're exploring ACP support for improved performance and capabilities. ACP is a standardized protocol (like LSP for AI agents) that allows:
+- Long-lived agent processes (no startup overhead per request)
+- Streaming responses via JSON-RPC
+- Terminal integration (agents can run commands)
+- Standardized session management
+
+CLI tools with ACP support:
+- `opencode acp` - OpenCode's ACP server
+- `gemini --experimental-acp` - Gemini CLI's ACP mode
+- Claude Code - via `@zed-industries/claude-code-acp` adapter
+
+See also: [obsidian-agent-client](https://github.com/RAIT-09/obsidian-agent-client) for an alternative ACP-based approach.
+
+**Long-lived CLI Process**: As an alternative to ACP, some tools support headless server modes:
+- `opencode serve` / `opencode attach` - Headless server mode
 - `codex mcp-server` - MCP server mode
-- `gemini` - Potential ACP mode
-
-**MCP Integration**: Model Context Protocol (MCP) could provide a standardized way to communicate with LLM tools. Instead of spawning CLI processes, the plugin could:
-1. Connect to MCP servers provided by each tool
-2. Use a unified protocol for all providers
-3. Maintain persistent connections for faster responses
-4. Access tool-specific capabilities (file editing, web browsing, etc.)
-
-This would require significant refactoring but could provide a much better UX with near-instant response times.
 
 ## License
 
