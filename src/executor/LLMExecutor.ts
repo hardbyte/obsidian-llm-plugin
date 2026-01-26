@@ -332,7 +332,7 @@ export class LLMExecutor {
 
       const timeoutSeconds = config.timeout ?? this.settings.defaultTimeout;
 
-      this.debug("Executing command:", cmd, args.join(" "));
+      this.debug("Executing command:", cmd, args[0] || "");
       this.debug("Working directory:", cwd || "(default)");
       this.debug("Timeout:", timeoutSeconds, "seconds");
       this.debug("Prompt length:", prompt.length, "chars");
@@ -700,6 +700,8 @@ export class LLMExecutor {
       const stateStatus = state?.status as string | undefined;
       const input = (stateInput || part?.input || obj.input) as Record<string, unknown> | undefined;
 
+      this.debug("OpenCode tool_use - tool:", toolName, "state.input:", JSON.stringify(stateInput)?.slice(0, 100));
+
       // Extract meaningful info from tool input
       let inputSummary: string | undefined;
       if (input) {
@@ -722,6 +724,7 @@ export class LLMExecutor {
       // If state shows completed, report as completed
       const status = stateStatus === "completed" ? "completed" : "started";
 
+      this.debug("OpenCode tool_use - returning:", toolName, inputSummary, status);
       return {
         type: "tool_use",
         tool: toolName || "tool",
