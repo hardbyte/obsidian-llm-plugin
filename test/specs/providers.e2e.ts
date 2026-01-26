@@ -454,7 +454,7 @@ describe("Provider Tests @provider", () => {
       expect(isActive).toBe(true);
     });
 
-    it("should not show model in status bar when no model configured", async () => {
+    it("should show 'default' in status bar when no model configured", async () => {
       // Clear the model
       await setProviderModel("claude", "");
       const dropdown = await browser.$(".llm-provider-selector select");
@@ -463,8 +463,8 @@ describe("Provider Tests @provider", () => {
 
       const statusText = await getStatusBarText();
       expect(statusText).toContain("Claude");
-      // Should not have parentheses (model indicator)
-      expect(statusText).not.toContain("(");
+      // Should show "(default)" to indicate CLI default is used
+      expect(statusText).toContain("(default)");
     });
   });
 

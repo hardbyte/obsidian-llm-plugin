@@ -276,11 +276,14 @@ export default class LLMPlugin extends Plugin {
 
     const indicator = this.statusBarEl.createSpan({ cls: "llm-status-indicator" });
 
-    // Build status text with provider and optionally model
+    // Build status text with provider and model
     let statusText = providerNames[displayProvider] || displayProvider;
     if (providerConfig?.model) {
       // Show abbreviated model name
       statusText += ` (${this.formatModelName(providerConfig.model)})`;
+    } else {
+      // Indicate CLI default is being used
+      statusText += " (default)";
     }
 
     this.statusBarEl.createSpan({
