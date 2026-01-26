@@ -11,7 +11,9 @@ import {
 } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider, ConversationMessage, ProgressEvent } from "../types";
+import { ACP_SUPPORTED_PROVIDERS } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
+import { AcpExecutor } from "../executor/AcpExecutor";
 
 export const CHAT_VIEW_TYPE = "llm-chat-view";
 
@@ -25,6 +27,7 @@ const PROVIDER_DISPLAY_NAMES: Record<LLMProvider, string> = {
 export class ChatView extends ItemView {
   plugin: LLMPlugin;
   private executor: LLMExecutor;
+  private acpExecutor: AcpExecutor;
   private messages: ConversationMessage[] = [];
   private currentProvider: LLMProvider;
   private isLoading = false;
@@ -44,6 +47,7 @@ export class ChatView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.executor = new LLMExecutor(plugin.settings);
+    this.acpExecutor = new AcpExecutor(plugin.settings);
     this.currentProvider = plugin.settings.defaultProvider;
   }
 
@@ -74,6 +78,7 @@ export class ChatView extends ItemView {
 
   async onClose() {
     this.executor.cancel();
+    await this.acpExecutor.disconnect();
     // Clean up markdown components
     this.markdownComponents.forEach((c) => c.unload());
     this.markdownComponents = [];
@@ -495,13 +500,45 @@ export class ChatView extends ItemView {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
 
-      const response = await this.executor.execute(
-        contextPrompt,
-        this.currentProvider,
-        this.plugin.settings.streamOutput ? onStream : undefined,
-        onProgress,
-        vaultPath
-      );
+      // Check if ACP mode is enabled for this provider
+      const providerConfig = this.plugin.settings.providers[this.currentProvider];
+      const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(this.currentProvider);
+
+      let response;
+      if (useAcp) {
+        // Use ACP executor for persistent connection
+        try {
+          // Connect if not already connected or provider changed
+          if (!this.acpExecutor.isConnected() || this.acpExecutor.getProvider() !== this.currentProvider) {
+            onProgress({ type: "status", message: "Connecting to ACP agent..." });
+            await this.acpExecutor.connect(this.currentProvider, vaultPath, { onProgress });
+          }
+
+          const acpResponse = await this.acpExecutor.prompt(contextPrompt, { onProgress });
+          response = {
+            content: streamedContent || acpResponse.content, // Prefer streamed content
+            provider: this.currentProvider,
+            durationMs: 0,
+            error: acpResponse.error,
+          };
+        } catch (err) {
+          response = {
+            content: "",
+            provider: this.currentProvider,
+            durationMs: 0,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      } else {
+        // Use regular CLI executor
+        response = await this.executor.execute(
+          contextPrompt,
+          this.currentProvider,
+          this.plugin.settings.streamOutput ? onStream : undefined,
+          onProgress,
+          vaultPath
+        );
+      }
 
       if (response.error) {
         this.showError(response.error);

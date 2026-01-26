@@ -21,7 +21,14 @@ export interface ProviderConfig {
   timeout?: number;
   /** Gemini: Enable yolo mode (auto-confirm dangerous operations) */
   yoloMode?: boolean;
+  /** Use ACP (Agent Client Protocol) for persistent connection (supported: claude, opencode, gemini) */
+  useAcp?: boolean;
 }
+
+/**
+ * Providers that support ACP (Agent Client Protocol)
+ */
+export const ACP_SUPPORTED_PROVIDERS: LLMProvider[] = ["claude", "opencode", "gemini"];
 
 /**
  * Common model options per provider

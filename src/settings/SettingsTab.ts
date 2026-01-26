@@ -1,7 +1,7 @@
 import { App, FuzzySuggestModal, PluginSettingTab, Setting, TFile } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider } from "../types";
-import { PROVIDER_MODELS } from "../types";
+import { PROVIDER_MODELS, ACP_SUPPORTED_PROVIDERS } from "../types";
 
 /**
  * Modal for selecting a markdown file from the vault
@@ -263,6 +263,20 @@ export class LLMSettingTab extends PluginSettingTab {
           toggle.setValue(providerConfig.yoloMode ?? false);
           toggle.onChange(async (value) => {
             this.plugin.settings.providers[provider].yoloMode = value;
+            await this.plugin.saveSettings();
+          });
+        });
+    }
+
+    // ACP mode for supported providers
+    if (ACP_SUPPORTED_PROVIDERS.includes(provider)) {
+      new Setting(settingsContainer)
+        .setName("Use ACP Mode (Experimental)")
+        .setDesc("Use Agent Client Protocol for persistent connection. Faster for multiple messages but may be less stable.")
+        .addToggle((toggle) => {
+          toggle.setValue(providerConfig.useAcp ?? false);
+          toggle.onChange(async (value) => {
+            this.plugin.settings.providers[provider].useAcp = value;
             await this.plugin.saveSettings();
           });
         });
