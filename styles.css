@@ -551,13 +551,60 @@
 
 .llm-progress-history {
   padding: 4px 12px;
-  font-size: 0.8em;
+  font-size: 0.85em;
   color: var(--text-muted);
+}
+
+.llm-tool-history-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 2px 0;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+}
+
+.llm-tool-complete {
+  color: var(--text-success);
+  flex-shrink: 0;
+}
+
+.llm-tool-active {
+  color: var(--text-accent);
+  flex-shrink: 0;
+}
+
+.llm-tool-name {
+  color: var(--text-accent);
+  font-weight: 500;
+}
+
+.llm-tool-detail {
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.llm-tool-count {
+  color: var(--text-muted);
+  font-size: 0.9em;
 }
 
 .llm-tool-history {
   font-family: var(--font-monospace);
   color: var(--text-accent);
+}
+
+/* Clickable file links in progress display */
+.llm-file-link {
+  color: var(--text-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: var(--font-monospace);
+  font-size: 0.95em;
+}
+
+.llm-file-link:hover {
+  color: var(--interactive-accent-hover);
+  text-decoration: underline;
 }
 
 .llm-progress {

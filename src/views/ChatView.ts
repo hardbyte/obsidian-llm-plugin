@@ -528,13 +528,7 @@ export class ChatView extends ItemView {
   private handleProgressEvent(event: ProgressEvent) {
     if (!this.messagesContainer) return;
 
-    // Remove the generic loading indicator when we get real progress
-    const loadingEl = this.messagesContainer.querySelector(".llm-loading");
-    if (loadingEl && event.type !== "text") {
-      loadingEl.remove();
-    }
-
-    // Ensure progress container exists
+    // Ensure progress container exists (it should already from setLoading, but just in case)
     if (!this.progressContainer) {
       this.progressContainer = this.messagesContainer.createDiv({
         cls: "llm-progress-container",
@@ -555,10 +549,16 @@ export class ChatView extends ItemView {
         break;
       }
 
-      case "thinking":
-        this.addRecentStatus("Thinking...");
-        this.updateProgressDisplay("Thinking...", "thinking");
+      case "thinking": {
+        // Show thinking content if available, otherwise generic "Thinking..."
+        // Allow up to 300 chars to show meaningful context
+        const thinkingMessage = event.content
+          ? event.content.slice(0, 300) + (event.content.length > 300 ? "..." : "")
+          : "Thinking...";
+        this.addRecentStatus(thinkingMessage.slice(0, 100)); // Keep recent status shorter
+        this.updateProgressDisplay(thinkingMessage, "thinking");
         break;
+      }
 
       case "status":
         // Don't add "Processing..." to history, it's too generic
@@ -612,6 +612,52 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * Check if a string looks like a file path
+   */
+  private isFilePath(str: string): boolean {
+    // Matches absolute paths, relative paths, and common file extensions
+    return /^[\/~.]/.test(str) || /\.[a-zA-Z0-9]{1,6}$/.test(str) || str.includes("/");
+  }
+
+  /**
+   * Create a clickable file path element
+   */
+  private createFileLink(container: HTMLElement, filePath: string, prefix?: string) {
+    if (prefix) {
+      container.createSpan({ text: prefix });
+    }
+
+    const link = container.createEl("a", {
+      text: filePath,
+      cls: "llm-file-link",
+      attr: { href: "#" },
+    });
+
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Try to open the file - handle both vault-relative and absolute paths
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vaultPath = (this.app.vault.adapter as any).basePath as string;
+      let relativePath = filePath;
+
+      // If it's an absolute path, try to make it relative to the vault
+      if (filePath.startsWith("/") && vaultPath && filePath.startsWith(vaultPath)) {
+        relativePath = filePath.slice(vaultPath.length + 1);
+      }
+
+      // Try to open as a vault file
+      const file = this.app.vault.getAbstractFileByPath(relativePath);
+      if (file instanceof TFile) {
+        const leaf = this.app.workspace.getLeaf(false);
+        leaf.openFile(file);
+      } else {
+        // Fallback: try opening as link text
+        this.app.workspace.openLinkText(relativePath, "");
+      }
+    });
+  }
+
+  /**
    * Update the progress display with tool history and current status
    */
   private updateProgressDisplay(message: string, type: "tool" | "thinking" | "status") {
@@ -619,29 +665,38 @@ export class ChatView extends ItemView {
 
     this.progressContainer.empty();
 
-    // Show collapsed tool history if we have any
+    // Show collapsed tool history if we have any - each tool on its own line
     const collapsed = this.collapsedToolHistory();
     if (collapsed.length > 0) {
       const historyEl = this.progressContainer.createDiv({ cls: "llm-progress-history" });
-      const toolsEl = historyEl.createSpan({ cls: "llm-tool-history" });
 
-      // Show tools with checkmarks for completed ones
+      // Show tools with checkmarks for completed ones, each on its own line
       // All but the last are complete, last is current/in-progress
-      // For single occurrences, show detail; for multiples, show count
-      const historyParts = collapsed.map((item, i) => {
+      collapsed.forEach((item, i) => {
         const isLast = i === collapsed.length - 1;
-        let display: string;
-        if (item.count > 1) {
-          display = `${item.name}(${item.count})`;
-        } else if (item.detail) {
-          display = `${item.name}:${item.detail}`;
-        } else {
-          display = item.name;
-        }
-        return isLast ? display : `✓ ${display}`;
-      });
+        const toolLine = historyEl.createDiv({ cls: "llm-tool-history-item" });
 
-      toolsEl.setText(historyParts.join(" → "));
+        // Add checkmark for completed items, spinner for in-progress
+        if (!isLast) {
+          toolLine.createSpan({ text: "✓ ", cls: "llm-tool-complete" });
+        } else {
+          toolLine.createSpan({ text: "› ", cls: "llm-tool-active" });
+        }
+
+        if (item.count > 1) {
+          toolLine.createSpan({ text: `${item.name} `, cls: "llm-tool-name" });
+          toolLine.createSpan({ text: `(${item.count}×)`, cls: "llm-tool-count" });
+        } else if (item.detail && this.isFilePath(item.detail)) {
+          // Make file paths clickable
+          toolLine.createSpan({ text: `${item.name}: `, cls: "llm-tool-name" });
+          this.createFileLink(toolLine, item.detail);
+        } else if (item.detail) {
+          toolLine.createSpan({ text: `${item.name}: `, cls: "llm-tool-name" });
+          toolLine.createSpan({ text: item.detail, cls: "llm-tool-detail" });
+        } else {
+          toolLine.createSpan({ text: item.name, cls: "llm-tool-name" });
+        }
+      });
     }
 
     // Show current status with details
@@ -649,7 +704,22 @@ export class ChatView extends ItemView {
     const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
     const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
     setIcon(iconEl, iconName);
-    progressEl.createSpan({ text: message, cls: "llm-progress-text" });
+
+    // Check if the message contains a file path (e.g., "Read: /path/to/file.ts")
+    const colonIdx = message.indexOf(":");
+    if (colonIdx > 0) {
+      const toolPart = message.slice(0, colonIdx + 1);
+      const detailPart = message.slice(colonIdx + 1).trim();
+      if (this.isFilePath(detailPart)) {
+        const textEl = progressEl.createSpan({ cls: "llm-progress-text" });
+        textEl.createSpan({ text: toolPart + " " });
+        this.createFileLink(textEl, detailPart);
+      } else {
+        progressEl.createSpan({ text: message, cls: "llm-progress-text" });
+      }
+    } else {
+      progressEl.createSpan({ text: message, cls: "llm-progress-text" });
+    }
 
     this.messagesContainer!.scrollTop = this.messagesContainer!.scrollHeight;
   }
@@ -727,22 +797,18 @@ export class ChatView extends ItemView {
     this.updateButtonStates();
 
     if (loading && this.messagesContainer) {
-      // Add loading indicator styled as assistant message
-      const loadingEl = this.messagesContainer.createDiv({ cls: "llm-message llm-message-assistant llm-loading" });
-
-      const headerEl = loadingEl.createDiv({ cls: "llm-message-header" });
-      headerEl.createSpan({
-        text: PROVIDER_DISPLAY_NAMES[this.currentProvider],
-        cls: "llm-message-role",
-      });
-
-      const contentEl = loadingEl.createDiv({ cls: "llm-message-content llm-loading-content" });
-      contentEl.createDiv({ cls: "llm-loading-spinner" });
-      contentEl.createSpan({ text: "Thinking..." });
+      // Create progress container immediately with initial "Processing..." status
+      // This ensures there's always visible feedback even if progress events are delayed
+      if (!this.progressContainer) {
+        this.progressContainer = this.messagesContainer.createDiv({
+          cls: "llm-progress-container",
+        });
+      }
+      this.updateProgressDisplay("Processing...", "status");
 
       this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     } else if (!loading && this.messagesContainer) {
-      // Remove loading indicator
+      // Remove loading indicator if it exists
       const loadingEl = this.messagesContainer.querySelector(".llm-loading");
       loadingEl?.remove();
     }

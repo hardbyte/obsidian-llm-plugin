@@ -167,9 +167,12 @@ function parseCodexOutput(output: string): ParsedResponse {
 /**
  * Parse OpenCode CLI JSON lines output
  * OpenCode outputs JSON lines with "type" field
+ * Only includes text from the final message (reason: "stop"), not intermediate thinking
  */
 function parseOpenCodeOutput(output: string): ParsedResponse {
-  const textParts: string[] = [];
+  // Track text per messageID, only include final messages
+  const textByMessage: Map<string, string[]> = new Map();
+  const finalMessages: Set<string> = new Set();
   const tokens: TokenUsage = { input: 0, output: 0 };
   let cost = 0;
 
@@ -179,17 +182,41 @@ function parseOpenCodeOutput(output: string): ParsedResponse {
       const obj = JSON.parse(line);
       const eventType = obj.type;
       const part = obj.part || {};
+      const messageID = part.messageID as string | undefined;
 
-      if (eventType === "text" && part.text) {
-        textParts.push(part.text);
+      if (eventType === "text" && part.text && messageID) {
+        if (!textByMessage.has(messageID)) {
+          textByMessage.set(messageID, []);
+        }
+        textByMessage.get(messageID)!.push(part.text);
       } else if (eventType === "step_finish") {
         const tokenData = part.tokens || {};
         tokens.input += tokenData.input || 0;
         tokens.output += tokenData.output || 0;
         cost += part.cost || 0;
+        // Mark messages that finished with "stop" as final (not intermediate thinking)
+        if (part.reason === "stop" && messageID) {
+          finalMessages.add(messageID);
+        }
       }
     } catch {
       // Not JSON, skip line
+    }
+  }
+
+  // Only include text from final messages, or all if none marked as final
+  let textParts: string[] = [];
+  if (finalMessages.size > 0) {
+    for (const msgId of finalMessages) {
+      const parts = textByMessage.get(msgId);
+      if (parts) {
+        textParts.push(...parts);
+      }
+    }
+  } else {
+    // Fallback: include all text if no final messages detected
+    for (const parts of textByMessage.values()) {
+      textParts.push(...parts);
     }
   }
 
@@ -219,9 +246,20 @@ export class LLMExecutor {
   private activeProcess: ChildProcess | null = null;
   // Track session IDs per provider for continuation
   private sessionIds: Partial<Record<LLMProvider, string>> = {};
+  // Track pending text per messageID for OpenCode (to distinguish intermediate from final)
+  private pendingOpenCodeText: Map<string, string> = new Map();
+  private currentOpenCodeMessageId: string | null = null;
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
+  }
+
+  /**
+   * Reset OpenCode streaming state
+   */
+  private resetOpenCodeState(): void {
+    this.pendingOpenCodeText.clear();
+    this.currentOpenCodeMessageId = null;
   }
 
   /**
@@ -275,6 +313,11 @@ export class LLMExecutor {
   ): Promise<LLMResponse> {
     const selectedProvider = provider || this.settings.defaultProvider;
     const providerConfig = this.settings.providers[selectedProvider];
+
+    // Reset streaming state for OpenCode
+    if (selectedProvider === "opencode") {
+      this.resetOpenCodeState();
+    }
 
     if (!providerConfig.enabled) {
       return {
@@ -383,6 +426,17 @@ export class LLMExecutor {
         // Parse streaming events
         const events = this.parseStreamingEvents(provider, chunk);
         for (const event of events) {
+          // Log progress events being emitted
+          if (event.type === "text") {
+            this.debug("Progress event: text, length:", event.content?.length || 0);
+          } else if (event.type === "tool_use") {
+            this.debug("Progress event: tool_use -", event.tool, event.input || "");
+          } else if (event.type === "thinking") {
+            this.debug("Progress event: thinking -", (event.content || "").slice(0, 80));
+          } else {
+            this.debug("Progress event:", event.type, "-", (event as { message?: string }).message || "");
+          }
+
           if (onProgress) {
             onProgress(event);
           }
@@ -406,16 +460,37 @@ export class LLMExecutor {
         reject(new Error(`Failed to spawn ${cmd}: ${error.message}`));
       });
 
-      child.on("close", (code) => {
+      // Track if we've already handled close to avoid double-processing
+      let closeHandled = false;
+
+      child.on("exit", (code, signal) => {
+        this.debug("Process exit event - code:", code, "signal:", signal, "pid:", child.pid);
+      });
+
+      child.on("close", (code, signal) => {
+        if (closeHandled) {
+          this.debug("WARNING: close event fired again - ignoring. code:", code, "signal:", signal);
+          return;
+        }
+        closeHandled = true;
+
         this.activeProcess = null;
-        this.debug("Process closed with code:", code);
+        this.debug("Process closed - code:", code, "signal:", signal, "pid:", child.pid);
         this.debug("Total stdout length:", stdout.length);
         this.debug("Total stderr length:", stderr.length);
+        this.debug("OpenCode pending text entries:", this.pendingOpenCodeText.size);
+        if (this.pendingOpenCodeText.size > 0) {
+          for (const [msgId, text] of this.pendingOpenCodeText.entries()) {
+            this.debug("  Pending text for", msgId, ":", text.slice(0, 100) + (text.length > 100 ? "..." : ""));
+          }
+        }
 
         if (code === 0) {
           resolve(stdout);
         } else if (code === null) {
-          reject(new Error("Process was killed"));
+          // Process was killed by signal
+          this.debug("Process killed by signal:", signal);
+          reject(new Error(`Process was killed${signal ? ` by ${signal}` : ""}`));
         } else {
           reject(
             new Error(
@@ -677,14 +752,19 @@ export class LLMExecutor {
    * - {"type":"text","part":{"id":"...","content":"..."}} - text content
    * - {"type":"tool_use","part":{"name":"...","input":{...}}} - tool call
    * - {"type":"tool_result","part":{"output":"..."}} - tool result
-   * - {"type":"step_finish",...} - step complete
+   * - {"type":"step_finish",...} - step complete with reason: "stop" for final message
+   *
+   * We track messageIDs to distinguish intermediate "thinking" text from final responses.
+   * Intermediate text (before step_finish with reason="stop") is shown as progress.
+   * Final text is emitted as "text" events for streaming output.
    */
   private parseOpenCodeEvent(obj: Record<string, unknown>): ProgressEvent | null {
     const type = obj.type as string;
     const part = obj.part as Record<string, unknown> | undefined;
+    const messageID = part?.messageID as string | undefined;
 
     // Debug log all events with key fields
-    this.debug("OpenCode event type:", type, "part keys:", part ? Object.keys(part).join(", ") : "none");
+    this.debug("OpenCode event type:", type, "messageID:", messageID, "part keys:", part ? Object.keys(part).join(", ") : "none");
 
     // Step start - indicates processing has begun, capture session ID
     if (type === "step_start") {
@@ -694,6 +774,22 @@ export class LLMExecutor {
         this.sessionIds.opencode = sessionId;
         this.debug("OpenCode session started:", sessionId);
       }
+
+      // If we have a new messageID and there's pending text from a previous message,
+      // that previous text was intermediate "thinking" - show it as status
+      if (messageID && this.currentOpenCodeMessageId && messageID !== this.currentOpenCodeMessageId) {
+        const prevText = this.pendingOpenCodeText.get(this.currentOpenCodeMessageId);
+        if (prevText) {
+          // Clear the previous message's text since it was intermediate
+          this.pendingOpenCodeText.delete(this.currentOpenCodeMessageId);
+          // Show truncated intermediate text as thinking/status (up to 300 chars)
+          const truncated = prevText.slice(0, 300) + (prevText.length > 300 ? "..." : "");
+          this.debug("Emitting intermediate text as thinking:", truncated.slice(0, 100));
+          this.currentOpenCodeMessageId = messageID;
+          return { type: "thinking", content: truncated };
+        }
+      }
+      this.currentOpenCodeMessageId = messageID || this.currentOpenCodeMessageId;
 
       const metadata = part?.metadata as Record<string, unknown> | undefined;
       const provider = metadata?.provider as string | undefined;
@@ -709,8 +805,31 @@ export class LLMExecutor {
       return { type: "status", message: "Processing..." };
     }
 
-    // Step finish - can show token usage if available
+    // Step finish - check if this is the final message (reason="stop")
     if (type === "step_finish") {
+      const reason = part?.reason as string | undefined;
+      const finishMessageId = messageID || this.currentOpenCodeMessageId;
+
+      this.debug("step_finish - reason:", reason, "messageID:", finishMessageId);
+
+      if (reason === "stop" && finishMessageId) {
+        // This is the final message - emit accumulated text as "text" event
+        const finalText = this.pendingOpenCodeText.get(finishMessageId);
+        if (finalText) {
+          this.pendingOpenCodeText.delete(finishMessageId);
+          return { type: "text", content: finalText };
+        }
+      } else if (finishMessageId) {
+        // Not the final message - the text was intermediate, show as thinking
+        const intermediateText = this.pendingOpenCodeText.get(finishMessageId);
+        if (intermediateText) {
+          this.pendingOpenCodeText.delete(finishMessageId);
+          const truncated = intermediateText.slice(0, 300) + (intermediateText.length > 300 ? "..." : "");
+          return { type: "thinking", content: truncated };
+        }
+      }
+
+      // Show token usage if available
       const tokens = part?.tokens as Record<string, unknown> | undefined;
       if (tokens) {
         const input = tokens.input as number | undefined;
@@ -722,11 +841,28 @@ export class LLMExecutor {
       return null;
     }
 
-    // Text output - check multiple possible locations for content
+    // Text output - accumulate by messageID, show snippet in progress
     if (type === "text") {
       const textContent = (part?.text || part?.content || part?.value || obj.text || obj.content) as string | undefined;
       if (textContent) {
-        return { type: "text", content: textContent };
+        const msgId = messageID || this.currentOpenCodeMessageId || "default";
+
+        // Accumulate text for this message
+        const existing = this.pendingOpenCodeText.get(msgId) || "";
+        this.pendingOpenCodeText.set(msgId, existing + textContent);
+
+        // Show a snippet as status to indicate progress (up to 300 chars for meaningful context)
+        const currentText = existing + textContent;
+        if (currentText.length <= 300) {
+          // For text under limit, show it all as thinking progress
+          return { type: "thinking", content: currentText };
+        } else if (textContent.length > 0 && existing.length < 300) {
+          // Show first portion as thinking, then stop updating
+          return { type: "thinking", content: currentText.slice(0, 300) + "..." };
+        }
+        // Don't emit "text" events during streaming - wait for step_finish
+        // This prevents intermediate thinking from appearing in the final output
+        return null;
       }
       // If we have a part but no text found, log it for debugging
       if (part) {
