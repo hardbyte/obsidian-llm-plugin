@@ -461,7 +461,7 @@ export class ChatView extends ItemView {
       provider: this.currentProvider,
     };
     this.messages.push(userMessage);
-    this.renderMessagesContent();
+    await this.renderMessagesContent();
 
     // Clear input
     this.inputEl.value = "";
@@ -512,7 +512,7 @@ export class ChatView extends ItemView {
           provider: this.currentProvider,
         };
         this.messages.push(assistantMessage);
-        this.renderMessagesContent();
+        await this.renderMessagesContent();
       }
     } catch (error) {
       this.showError(error instanceof Error ? error.message : String(error));

@@ -125,8 +125,8 @@ This improves response times for follow-up messages. Clearing the conversation r
 
 ### Future Improvements
 
-**Long-lived CLI Process**: Currently each request spawns a new CLI process. A more efficient approach would be to keep a long-running process and communicate via stdin/stdout or a local socket. Some CLI tools support this:
-- `opencode serve` / `opencode attach` - Headless server mode
+**Long-lived CLI Process**: Currently each request spawns a new CLI process. A more efficient approach would be to keep a long-running process and communicate via stdin/stdout or a local socket. This would significantly improve response times, especially for OpenCode which has slow startup. Some CLI tools support this:
+- `opencode serve` / `opencode attach` - Headless server mode (preferred over `--resume` for performance)
 - `codex mcp-server` - MCP server mode
 - `gemini` - Potential ACP mode
 
