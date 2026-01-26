@@ -15,7 +15,7 @@ import { browser, expect } from "@wdio/globals";
 // Fast models for testing each provider
 const FAST_MODELS = {
   claude: "claude-3-5-haiku-latest",
-  gemini: "gemini-2.0-flash-lite",
+  gemini: "gemini-3.0-flash",
   opencode: "gpt-4o-mini",
   codex: "gpt-5-nano",
 };
@@ -61,6 +61,30 @@ async function getProviderModel(provider: string): Promise<string | undefined> {
     const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
     return plugin?.settings?.providers?.[p]?.model;
   }, provider);
+}
+
+/**
+ * Helper to get status bar text
+ */
+async function getStatusBarText(): Promise<string> {
+  const statusBar = await browser.$(".llm-status-bar .llm-status-text");
+  if (await statusBar.isExisting()) {
+    return await statusBar.getText();
+  }
+  // Fallback to checking for the status bar item directly
+  const statusBarItem = await browser.$(".llm-status-bar-item");
+  if (await statusBarItem.isExisting()) {
+    return await statusBarItem.getText();
+  }
+  return "";
+}
+
+/**
+ * Helper to check if status bar indicator is active
+ */
+async function isStatusBarActive(): Promise<boolean> {
+  const indicator = await browser.$(".llm-status-bar .llm-status-indicator.active");
+  return await indicator.isExisting();
 }
 
 describe("Provider Tests @provider", () => {
@@ -176,9 +200,15 @@ describe("Provider Tests @provider", () => {
     before(async () => {
       // Enable and configure Gemini with fast model
       await setProviderModel("gemini", FAST_MODELS.gemini);
+      // Give time for settings to save
+      await browser.pause(500);
     });
 
     beforeEach(async () => {
+      // Close any existing modal first
+      await browser.keys(["Escape"]);
+      await browser.pause(200);
+      // Now open fresh chat modal
       await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
       await browser.pause(1000);
     });
@@ -191,6 +221,11 @@ describe("Provider Tests @provider", () => {
       }
       await browser.keys(["Escape"]);
       await browser.pause(200);
+    });
+
+    it("should have fast model configured", async () => {
+      const model = await getProviderModel("gemini");
+      expect(model).toBe(FAST_MODELS.gemini);
     });
 
     it("should be able to select Gemini provider when enabled", async () => {
@@ -210,11 +245,6 @@ describe("Provider Tests @provider", () => {
       expect(hasGemini).toBe(true);
       await dropdown.selectByAttribute("value", "gemini");
       await browser.pause(200);
-    });
-
-    it("should have fast model configured", async () => {
-      const model = await getProviderModel("gemini");
-      expect(model).toBe(FAST_MODELS.gemini);
     });
 
     it("should send message and receive response @slow", async () => {
@@ -280,15 +310,15 @@ describe("Provider Tests @provider", () => {
       let model = await getProviderModel("gemini");
       expect(model).toBe("gemini-2.5-pro");
 
-      // Switch to flash
+      // Switch to 2.5 flash
       await setProviderModel("gemini", "gemini-2.5-flash");
       model = await getProviderModel("gemini");
       expect(model).toBe("gemini-2.5-flash");
 
-      // Switch to flash lite (fastest)
-      await setProviderModel("gemini", "gemini-2.0-flash-lite");
+      // Switch to 3.0 flash (fast)
+      await setProviderModel("gemini", "gemini-3.0-flash");
       model = await getProviderModel("gemini");
-      expect(model).toBe("gemini-2.0-flash-lite");
+      expect(model).toBe("gemini-3.0-flash");
     });
 
     it("should switch Codex model and verify setting persists", async () => {
@@ -334,6 +364,107 @@ describe("Provider Tests @provider", () => {
       await setProviderModel("claude", "");
       model = await getProviderModel("claude");
       expect(model).toBe("");
+    });
+  });
+
+  describe("Status Bar Tests @statusbar @provider", () => {
+    before(async () => {
+      // Close any existing chat view to ensure fresh dropdown after settings change
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
+      await browser.pause(200);
+
+      // Ensure Claude and Gemini are enabled with models for testing
+      await setProviderModel("claude", FAST_MODELS.claude);
+      await setProviderModel("gemini", FAST_MODELS.gemini);
+      // Give time for settings to save
+      await browser.pause(300);
+    });
+
+    beforeEach(async () => {
+      await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+      await browser.pause(1000);
+    });
+
+    afterEach(async () => {
+      // Close the chat view completely so next test gets fresh dropdown
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
+      await browser.pause(200);
+    });
+
+    it("should show status bar with provider name", async () => {
+      const statusText = await getStatusBarText();
+      expect(statusText).toContain("LLM:");
+      expect(statusText).toContain("Claude");
+    });
+
+    it("should show model name in status bar when set", async () => {
+      await setProviderModel("claude", "claude-3-5-haiku-latest");
+      // Trigger status bar update by switching provider in chat
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "claude");
+      await browser.pause(300);
+
+      const statusText = await getStatusBarText();
+      expect(statusText).toContain("haiku");
+    });
+
+    it("should update status bar when provider is switched", async () => {
+      // Gemini is already enabled in before() hook
+      // Switch to gemini in the dropdown
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "gemini");
+      await browser.pause(300);
+
+      const statusText = await getStatusBarText();
+      expect(statusText).toContain("Gemini");
+      expect(statusText).toContain("flash");
+    });
+
+    it("should update status bar when model changes", async () => {
+      // Set to haiku
+      await setProviderModel("claude", "claude-3-5-haiku-latest");
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "claude");
+      await browser.pause(300);
+
+      let statusText = await getStatusBarText();
+      expect(statusText).toContain("haiku");
+
+      // Switch to sonnet
+      await setProviderModel("claude", "claude-sonnet-4-20250514");
+      await dropdown.selectByAttribute("value", "claude");
+      await browser.pause(300);
+
+      statusText = await getStatusBarText();
+      expect(statusText).toContain("sonnet");
+    });
+
+    it("should show indicator as active when provider is enabled", async () => {
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "claude");
+      await browser.pause(300);
+
+      const isActive = await isStatusBarActive();
+      expect(isActive).toBe(true);
+    });
+
+    it("should not show model in status bar when no model configured", async () => {
+      // Clear the model
+      await setProviderModel("claude", "");
+      const dropdown = await browser.$(".llm-provider-selector select");
+      await dropdown.selectByAttribute("value", "claude");
+      await browser.pause(300);
+
+      const statusText = await getStatusBarText();
+      expect(statusText).toContain("Claude");
+      // Should not have parentheses (model indicator)
+      expect(statusText).not.toContain("(");
     });
   });
 
