@@ -592,12 +592,17 @@ export class ChatView extends ItemView {
       contextParts.push(`System: ${systemPrompt}`);
     }
 
-    // Add vault path context
+    // Add vault path and formatting hints
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const vaultPath = (this.app.vault.adapter as any).basePath;
     if (vaultPath) {
       contextParts.push(`Obsidian Vault Path: ${vaultPath}`);
     }
+
+    // Add formatting hints for Obsidian
+    contextParts.push(
+      "Formatting: When referencing Obsidian notes, use wiki links like [[Note Name]] or [[path/to/Note]] without backticks - they will render as clickable links."
+    );
 
     // Add today's daily note context
     if (dailyNoteContext) {
