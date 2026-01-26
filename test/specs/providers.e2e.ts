@@ -102,8 +102,16 @@ describe("Provider Tests @provider", () => {
 
   describe("Claude Provider @claude @provider", () => {
     before(async () => {
+      // Close any existing chat view to ensure fresh state
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
+      await browser.pause(200);
+
       // Configure Claude with fast model for testing
       await setProviderModel("claude", FAST_MODELS.claude);
+      await browser.pause(300);
     });
 
     beforeEach(async () => {
@@ -118,7 +126,11 @@ describe("Provider Tests @provider", () => {
         await cancelBtn.click();
         await browser.pause(500);
       }
-      await browser.keys(["Escape"]);
+      // Close the chat view completely
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
       await browser.pause(200);
     });
 
@@ -198,6 +210,13 @@ describe("Provider Tests @provider", () => {
 
   describe("Gemini Provider @gemini @provider", () => {
     before(async () => {
+      // Close any existing chat view to ensure fresh dropdown after settings change
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
+      await browser.pause(200);
+
       // Enable and configure Gemini with fast model
       await setProviderModel("gemini", FAST_MODELS.gemini);
       // Give time for settings to save
@@ -205,10 +224,6 @@ describe("Provider Tests @provider", () => {
     });
 
     beforeEach(async () => {
-      // Close any existing modal first
-      await browser.keys(["Escape"]);
-      await browser.pause(200);
-      // Now open fresh chat modal
       await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
       await browser.pause(1000);
     });
@@ -219,7 +234,11 @@ describe("Provider Tests @provider", () => {
         await cancelBtn.click();
         await browser.pause(500);
       }
-      await browser.keys(["Escape"]);
+      // Close the chat view completely so next test gets fresh dropdown
+      await browser.execute(() => {
+        const app = (window as any).app;
+        app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
       await browser.pause(200);
     });
 
@@ -505,8 +524,16 @@ describe("Progress Indicators @progress @provider", () => {
     );
     await browser.pause(2000);
 
+    // Close any existing chat view to ensure fresh state
+    await browser.execute(() => {
+      const app = (window as any).app;
+      app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+    });
+    await browser.pause(200);
+
     // Use fast model for progress tests
     await setProviderModel("claude", FAST_MODELS.claude);
+    await browser.pause(300);
   });
 
   beforeEach(async () => {
@@ -520,7 +547,11 @@ describe("Progress Indicators @progress @provider", () => {
       await cancelBtn.click();
       await browser.pause(500);
     }
-    await browser.keys(["Escape"]);
+    // Close the chat view completely
+    await browser.execute(() => {
+      const app = (window as any).app;
+      app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+    });
     await browser.pause(200);
   });
 
