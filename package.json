@@ -11,6 +11,7 @@
     "test:e2e:claude": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @claude",
     "test:e2e:gemini": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @gemini",
     "test:e2e:providers": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @provider",
+    "test:e2e:files": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @files",
     "wdio": "wdio run ./wdio.conf.ts"
   },
   "keywords": [
