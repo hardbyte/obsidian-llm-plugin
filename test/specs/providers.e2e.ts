@@ -22,6 +22,7 @@ const FAST_MODELS = {
 
 /**
  * Helper to configure a provider's model via plugin settings
+ * Also disables ACP mode for the provider (non-ACP tests)
  */
 async function setProviderModel(provider: string, model: string): Promise<void> {
   await browser.execute(
@@ -30,6 +31,7 @@ async function setProviderModel(provider: string, model: string): Promise<void> 
       if (plugin?.settings?.providers?.[p]) {
         plugin.settings.providers[p].model = m;
         plugin.settings.providers[p].enabled = true;
+        plugin.settings.providers[p].useAcp = false; // Disable ACP for non-ACP tests
         // Enable yolo mode for Gemini (required for non-interactive use)
         if (p === "gemini") {
           plugin.settings.providers[p].yoloMode = true;
@@ -102,6 +104,21 @@ describe("Provider Tests @provider", () => {
       { timeout: 30000, timeoutMsg: "Obsidian workspace did not load" }
     );
     await browser.pause(2000);
+
+    // Ensure ACP is disabled for all providers at the start of non-ACP tests
+    // This prevents leftover settings from previous test runs causing issues
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers) {
+        for (const provider of ["claude", "opencode", "codex", "gemini"]) {
+          if (plugin.settings.providers[provider]) {
+            plugin.settings.providers[provider].useAcp = false;
+          }
+        }
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
   });
 
   describe("Claude Provider @claude @provider", () => {

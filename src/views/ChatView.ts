@@ -479,6 +479,12 @@ export class ChatView extends ItemView {
     if (!useAcp) {
       // Not using ACP - make sure status bar shows configured model (not stale ACP model)
       this.plugin.updateStatusBar(targetProvider);
+      // If there was an in-flight ACP connection, reset loading state
+      // (the connection will complete in background but input should be usable)
+      if (this.acpConnectionPromise && this.isLoading) {
+        this.setLoading(false);
+        this.clearProgress();
+      }
       return;
     }
 
