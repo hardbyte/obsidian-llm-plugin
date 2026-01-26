@@ -58,24 +58,53 @@ function nodeToWebReadable(nodeStream: NodeJS.ReadableStream): ReadableStream<Ui
 }
 
 function nodeToWebWritable(nodeStream: NodeJS.WritableStream): WritableStream<Uint8Array> {
+  let streamClosed = false;
+
+  // Track if stream closes
+  nodeStream.on("close", () => {
+    streamClosed = true;
+  });
+  nodeStream.on("error", () => {
+    streamClosed = true;
+  });
+
   return new WritableStream({
     write(chunk) {
       return new Promise((resolve, reject) => {
-        const ok = nodeStream.write(chunk, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-        if (!ok) {
-          nodeStream.once("drain", resolve);
+        if (streamClosed) {
+          reject(new Error("Stream is closed"));
+          return;
+        }
+
+        try {
+          const ok = nodeStream.write(chunk, (err) => {
+            if (err) {
+              streamClosed = true;
+              reject(err);
+            } else {
+              resolve();
+            }
+          });
+          if (!ok) {
+            nodeStream.once("drain", resolve);
+          }
+        } catch (err) {
+          streamClosed = true;
+          reject(err);
         }
       });
     },
     close() {
       return new Promise((resolve) => {
+        if (streamClosed) {
+          resolve();
+          return;
+        }
         nodeStream.end(resolve);
       });
     },
     abort(err) {
+      streamClosed = true;
       if ("destroy" in nodeStream && typeof nodeStream.destroy === "function") {
         (nodeStream as NodeJS.WritableStream & { destroy: (err?: Error) => void }).destroy(err);
       }
@@ -168,13 +197,25 @@ export class AcpExecutor {
       throw new Error("Failed to create stdio streams for ACP agent");
     }
 
-    // Log stderr for debugging
+    // Collect stderr for error messages
+    let stderrOutput = "";
     this.process.stderr?.on("data", (data: Buffer) => {
-      this.debug("Agent stderr:", data.toString());
+      const text = data.toString();
+      stderrOutput += text;
+      this.debug("Agent stderr:", text);
+    });
+
+    // Create a promise that rejects if the process exits during initialization
+    let processExitReject: ((err: Error) => void) | null = null;
+    const processExitPromise = new Promise<never>((_, reject) => {
+      processExitReject = reject;
     });
 
     this.process.on("error", (err) => {
       this.debug("Agent process error:", err);
+      if (processExitReject) {
+        processExitReject(new Error(`ACP process error: ${err.message}`));
+      }
     });
 
     this.process.on("exit", (code, signal) => {
@@ -182,6 +223,12 @@ export class AcpExecutor {
       this.connection = null;
       this.process = null;
       this.sessionId = null;
+      this.configOptions = [];
+      this.modelState = null;
+      if (processExitReject) {
+        const reason = stderrOutput.trim() || `exit code ${code}${signal ? `, signal ${signal}` : ""}`;
+        processExitReject(new Error(`ACP process exited: ${reason}`));
+      }
     });
 
     // Create the ACP stream from stdio
@@ -218,28 +265,38 @@ export class AcpExecutor {
     this.connection = new ClientSideConnection(createClient, stream);
     this.currentProvider = provider;
 
-    // Initialize the connection
+    // Initialize the connection - race against process exit
     this.debug("Initializing ACP connection...");
-    const initResponse = await this.connection.initialize({
-      protocolVersion: 1,
-      clientInfo: {
-        name: "obsidian-llm-plugin",
-        version: "1.0.0",
-      },
-      clientCapabilities: {},
-    });
+    const initResponse = await Promise.race([
+      this.connection.initialize({
+        protocolVersion: 1,
+        clientInfo: {
+          name: "obsidian-llm-plugin",
+          version: "1.0.0",
+        },
+        clientCapabilities: {},
+      }),
+      processExitPromise,
+    ]);
 
     this.debug("ACP initialized:", initResponse);
 
-    // Create a new session
+    // Create a new session - race against process exit
     this.debug("Creating new session...");
-    const sessionResponse = await this.connection.newSession({
-      cwd,
-      mcpServers: [],
-    });
+    const sessionResponse = await Promise.race([
+      this.connection.newSession({
+        cwd,
+        mcpServers: [],
+      }),
+      processExitPromise,
+    ]);
 
     this.sessionId = sessionResponse.sessionId;
     this.debug("Session created:", this.sessionId);
+
+    // Clear the exit rejection now that we're successfully connected
+    // This prevents the rejection from being triggered on normal shutdown
+    processExitReject = null;
 
     // Store config options from session response
     this.configOptions = sessionResponse.configOptions ?? [];
@@ -506,10 +563,27 @@ export class AcpExecutor {
   }
 
   /**
-   * Check if connected
+   * Check if connected and the process is still running
    */
   isConnected(): boolean {
-    return this.connection !== null && this.sessionId !== null;
+    // Check if we have a connection and session
+    if (!this.connection || !this.sessionId) {
+      return false;
+    }
+
+    // Check if the process is still running
+    if (this.process && this.process.exitCode !== null) {
+      // Process has exited - clean up
+      this.debug("Process has exited, cleaning up connection state");
+      this.connection = null;
+      this.sessionId = null;
+      this.process = null;
+      this.configOptions = [];
+      this.modelState = null;
+      return false;
+    }
+
+    return true;
   }
 
   /**

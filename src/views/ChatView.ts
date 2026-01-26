@@ -74,6 +74,9 @@ export class ChatView extends ItemView {
 
     // Focus the input
     setTimeout(() => this.inputEl?.focus(), 50);
+
+    // Eagerly connect to ACP if enabled for the current provider
+    this.connectAcpIfEnabled();
   }
 
   async onClose() {
@@ -108,6 +111,8 @@ export class ChatView extends ItemView {
     dropdown.onChange((value) => {
       this.currentProvider = value as LLMProvider;
       this.plugin.updateStatusBar(this.currentProvider);
+      // Eagerly connect to ACP when provider changes
+      this.connectAcpIfEnabled();
     });
 
     // Update status bar to show initial provider
@@ -455,6 +460,53 @@ export class ChatView extends ItemView {
     } catch (error) {
       new Notice(`Error reading system prompt file: ${error}`);
       return "";
+    }
+  }
+
+  /**
+   * Eagerly connect to ACP if enabled for the current provider.
+   * This is called when the view opens and when the provider changes.
+   */
+  private async connectAcpIfEnabled(): Promise<void> {
+    const providerConfig = this.plugin.settings.providers[this.currentProvider];
+    const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(this.currentProvider);
+
+    if (!useAcp) {
+      return;
+    }
+
+    // Don't reconnect if already connected to this provider
+    if (this.acpExecutor.isConnected() && this.acpExecutor.getProvider() === this.currentProvider) {
+      // Already connected - just update the status bar with model info
+      const currentModel = this.acpExecutor.getCurrentModel();
+      if (currentModel) {
+        this.plugin.updateStatusBar(this.currentProvider, currentModel.name);
+      }
+      return;
+    }
+
+    // Get vault path for working directory
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
+
+    try {
+      // Show connecting status
+      this.handleProgressEvent({ type: "status", message: "Connecting to ACP agent..." });
+
+      await this.acpExecutor.connect(this.currentProvider, vaultPath);
+
+      // Update status bar with actual model from ACP session
+      const currentModel = this.acpExecutor.getCurrentModel();
+      if (currentModel) {
+        this.plugin.updateStatusBar(this.currentProvider, currentModel.name);
+      }
+
+      // Clear the connecting status
+      this.clearProgress();
+    } catch (err) {
+      // Connection failed - will retry when message is sent
+      console.warn("ACP eager connection failed:", err);
+      this.clearProgress();
     }
   }
 
