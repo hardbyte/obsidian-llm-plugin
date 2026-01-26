@@ -42,5 +42,8 @@
     "typescript": "^5.0.0",
     "wdio-obsidian-reporter": "^2.2.1",
     "wdio-obsidian-service": "^2.2.1"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.13.1"
   }
 }
