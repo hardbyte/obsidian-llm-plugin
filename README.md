@@ -111,6 +111,33 @@ npm run build
 4. In Obsidian, enable the plugin and use Cmd/Ctrl+R to reload after changes
 5. Open the Developer Console (Cmd/Ctrl+Shift+I) to see logs and errors
 
+## Architecture Notes
+
+### Session Continuation
+
+The plugin captures session IDs from CLI tools and uses them for subsequent requests within the same conversation:
+- **Claude**: `--resume <session_id>`
+- **OpenCode**: `--session <session_id>`
+- **Gemini**: `--resume <session_id>`
+- **Codex**: Uses `resume` subcommand (different pattern, not fully supported)
+
+This improves response times for follow-up messages. Clearing the conversation resets the session.
+
+### Future Improvements
+
+**Long-lived CLI Process**: Currently each request spawns a new CLI process. A more efficient approach would be to keep a long-running process and communicate via stdin/stdout or a local socket. Some CLI tools support this:
+- `opencode serve` / `opencode attach` - Headless server mode
+- `codex mcp-server` - MCP server mode
+- `gemini` - Potential ACP mode
+
+**MCP Integration**: Model Context Protocol (MCP) could provide a standardized way to communicate with LLM tools. Instead of spawning CLI processes, the plugin could:
+1. Connect to MCP servers provided by each tool
+2. Use a unified protocol for all providers
+3. Maintain persistent connections for faster responses
+4. Access tool-specific capabilities (file editing, web browsing, etc.)
+
+This would require significant refactoring but could provide a much better UX with near-instant response times.
+
 ## License
 
 MIT

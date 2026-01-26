@@ -1,5 +1,5 @@
 import { Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
-import type { LLMPluginSettings } from "./src/types";
+import type { LLMPluginSettings, LLMProvider } from "./src/types";
 import { DEFAULT_SETTINGS } from "./src/types";
 import { LLMSettingTab } from "./src/settings/SettingsTab";
 import { QuickPromptModal } from "./src/modals";
@@ -257,11 +257,12 @@ export default class LLMPlugin extends Plugin {
 
   /**
    * Update the status bar with current provider info
+   * @param provider Optional provider to display (uses default if not specified)
    */
-  private updateStatusBar() {
+  updateStatusBar(provider?: LLMProvider) {
     if (!this.statusBarEl) return;
 
-    const provider = this.settings.defaultProvider;
+    const displayProvider = provider ?? this.settings.defaultProvider;
     const providerNames: Record<string, string> = {
       claude: "Claude",
       opencode: "OpenCode",
@@ -272,10 +273,10 @@ export default class LLMPlugin extends Plugin {
     this.statusBarEl.empty();
 
     const indicator = this.statusBarEl.createSpan({ cls: "llm-status-indicator" });
-    this.statusBarEl.createSpan({ text: ` LLM: ${providerNames[provider] || provider}` });
+    this.statusBarEl.createSpan({ text: ` LLM: ${providerNames[displayProvider] || displayProvider}` });
 
     // Check if provider is enabled
-    if (this.settings.providers[provider]?.enabled) {
+    if (this.settings.providers[displayProvider]?.enabled) {
       indicator.addClass("active");
     }
   }

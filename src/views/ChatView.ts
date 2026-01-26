@@ -31,12 +31,14 @@ export class ChatView extends ItemView {
   private messagesContainer: HTMLElement | null = null;
   private inputEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
+  private cancelBtn: HTMLButtonElement | null = null;
   private includeContextToggle: HTMLInputElement | null = null;
   private progressContainer: HTMLElement | null = null;
   private currentToolUse: string | null = null;
   private markdownComponents: Component[] = [];
   private toolHistory: string[] = [];
   private recentStatuses: string[] = [];
+  private hasActiveSession = false; // Track if we have an active Claude session
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -75,6 +77,8 @@ export class ChatView extends ItemView {
     // Clean up markdown components
     this.markdownComponents.forEach((c) => c.unload());
     this.markdownComponents = [];
+    // Reset status bar to default provider
+    this.plugin.updateStatusBar();
   }
 
   private renderHeader(container: HTMLElement) {
@@ -98,7 +102,11 @@ export class ChatView extends ItemView {
     dropdown.setValue(this.currentProvider);
     dropdown.onChange((value) => {
       this.currentProvider = value as LLMProvider;
+      this.plugin.updateStatusBar(this.currentProvider);
     });
+
+    // Update status bar to show initial provider
+    this.plugin.updateStatusBar(this.currentProvider);
 
     // Include context toggle
     const contextToggle = controlsRow.createDiv({ cls: "llm-context-toggle" });
@@ -120,6 +128,7 @@ export class ChatView extends ItemView {
     setIcon(clearBtn, "trash-2");
     clearBtn.addEventListener("click", () => {
       this.messages = [];
+      this.executor.clearSession(); // Clear Claude session when conversation is cleared
       this.renderMessagesContent();
     });
   }
@@ -207,6 +216,17 @@ export class ChatView extends ItemView {
           sourcePath,
           component
         );
+
+        // Add click handlers for internal links (wiki links)
+        contentEl.querySelectorAll("a.internal-link").forEach((link) => {
+          link.addEventListener("click", (e) => {
+            e.preventDefault();
+            const href = link.getAttribute("data-href");
+            if (href) {
+              this.app.workspace.openLinkText(href, sourcePath);
+            }
+          });
+        });
       } else {
         // User messages as plain text
         contentEl.setText(msg.content);
@@ -243,8 +263,41 @@ export class ChatView extends ItemView {
       text: "Send",
       cls: "llm-chat-send mod-cta",
     });
-
     this.sendBtn.addEventListener("click", () => this.sendMessage());
+
+    this.cancelBtn = buttonRow.createEl("button", {
+      text: "Cancel",
+      cls: "llm-chat-cancel",
+    });
+    this.cancelBtn.style.display = "none";
+    this.cancelBtn.addEventListener("click", () => this.cancelRequest());
+  }
+
+  /**
+   * Cancel the current request
+   */
+  private cancelRequest() {
+    this.executor.cancel();
+    this.isLoading = false;
+    this.updateButtonStates();
+    this.clearProgress();
+    new Notice("Request cancelled");
+  }
+
+  /**
+   * Update send/cancel button visibility based on loading state
+   */
+  private updateButtonStates() {
+    if (this.sendBtn) {
+      this.sendBtn.style.display = this.isLoading ? "none" : "block";
+      this.sendBtn.disabled = this.isLoading;
+    }
+    if (this.cancelBtn) {
+      this.cancelBtn.style.display = this.isLoading ? "block" : "none";
+    }
+    if (this.inputEl) {
+      this.inputEl.disabled = this.isLoading;
+    }
   }
 
   /**
@@ -534,6 +587,31 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * Collapse consecutive repeated tools into counts
+   * e.g., ["glob: *.md", "glob: *.ts", "read: file.md", "read: other.md"]
+   *    -> [{ name: "glob", detail: "*.md", count: 2 }, { name: "read", detail: "file.md", count: 2 }]
+   * Preserves detail from first occurrence for display
+   */
+  private collapsedToolHistory(): { name: string; detail?: string; count: number }[] {
+    const collapsed: { name: string; detail?: string; count: number }[] = [];
+
+    for (const tool of this.toolHistory) {
+      const colonIdx = tool.indexOf(":");
+      const toolName = colonIdx > 0 ? tool.slice(0, colonIdx).trim() : tool;
+      const detail = colonIdx > 0 ? tool.slice(colonIdx + 1).trim() : undefined;
+      const last = collapsed[collapsed.length - 1];
+
+      if (last && last.name === toolName) {
+        last.count++;
+      } else {
+        collapsed.push({ name: toolName, detail, count: 1 });
+      }
+    }
+
+    return collapsed;
+  }
+
+  /**
    * Update the progress display with tool history and current status
    */
   private updateProgressDisplay(message: string, type: "tool" | "thinking" | "status") {
@@ -541,22 +619,32 @@ export class ChatView extends ItemView {
 
     this.progressContainer.empty();
 
-    // Show tool history if we have any
-    if (this.toolHistory.length > 0) {
+    // Show collapsed tool history if we have any
+    const collapsed = this.collapsedToolHistory();
+    if (collapsed.length > 0) {
       const historyEl = this.progressContainer.createDiv({ cls: "llm-progress-history" });
       const toolsEl = historyEl.createSpan({ cls: "llm-tool-history" });
 
-      // Show tools with checkmarks for completed ones, arrow for current
-      const historyDisplay = this.toolHistory.map((tool, i) => {
-        const isLast = i === this.toolHistory.length - 1;
-        const shortName = tool.split(":")[0]; // Just the tool name
-        return isLast ? shortName : `✓ ${shortName}`;
-      }).join(" → ");
+      // Show tools with checkmarks for completed ones
+      // All but the last are complete, last is current/in-progress
+      // For single occurrences, show detail; for multiples, show count
+      const historyParts = collapsed.map((item, i) => {
+        const isLast = i === collapsed.length - 1;
+        let display: string;
+        if (item.count > 1) {
+          display = `${item.name}(${item.count})`;
+        } else if (item.detail) {
+          display = `${item.name}:${item.detail}`;
+        } else {
+          display = item.name;
+        }
+        return isLast ? display : `✓ ${display}`;
+      });
 
-      toolsEl.setText(historyDisplay);
+      toolsEl.setText(historyParts.join(" → "));
     }
 
-    // Show current status
+    // Show current status with details
     const iconName = type === "tool" ? "wrench" : type === "thinking" ? "brain" : "loader";
     const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
     const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
@@ -636,13 +724,7 @@ export class ChatView extends ItemView {
 
   private setLoading(loading: boolean) {
     this.isLoading = loading;
-    if (this.sendBtn) {
-      this.sendBtn.disabled = loading;
-      this.sendBtn.setText(loading ? "..." : "Send");
-    }
-    if (this.inputEl) {
-      this.inputEl.disabled = loading;
-    }
+    this.updateButtonStates();
 
     if (loading && this.messagesContainer) {
       // Add loading indicator styled as assistant message

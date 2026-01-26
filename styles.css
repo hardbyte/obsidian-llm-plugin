@@ -95,11 +95,20 @@
 
 .llm-message-content {
   word-wrap: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* User messages preserve whitespace */
 .llm-message-user .llm-message-content {
   white-space: pre-wrap;
+}
+
+/* Ensure text selection works in chat input */
+.llm-chat-input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .llm-message-content code {
@@ -153,6 +162,20 @@
 .llm-chat-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.llm-chat-cancel {
+  padding: 10px 20px;
+  background-color: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.llm-chat-cancel:hover {
+  opacity: 0.9;
 }
 
 /* Loading indicator */

@@ -47,6 +47,7 @@ function parseClaudeOutput(output: string): ParsedResponse {
   const textParts: string[] = [];
   const tokens: TokenUsage = { input: 0, output: 0 };
   let cost = 0;
+  let hasAssistantContent = false;
 
   for (const line of output.trim().split("\n")) {
     if (!line.trim()) continue;
@@ -55,24 +56,24 @@ function parseClaudeOutput(output: string): ParsedResponse {
 
       // Handle different event types
       if (obj.type === "assistant" && obj.message?.content) {
-        // Final message content
+        // Final message content - this is the canonical source
         for (const block of obj.message.content) {
           if (block.type === "text") {
             textParts.push(block.text);
+            hasAssistantContent = true;
           }
         }
       } else if (obj.type === "content_block_delta" && obj.delta?.text) {
         textParts.push(obj.delta.text);
-      } else if (obj.type === "result" && obj.result) {
-        // Legacy format fallback
+        hasAssistantContent = true;
+      } else if (obj.type === "result" && obj.result && !hasAssistantContent) {
+        // Only use result as fallback if we didn't get assistant content
+        // The result event duplicates the assistant content
         textParts.push(obj.result);
       } else if (obj.type === "message_delta" && obj.usage) {
         tokens.output = obj.usage.output_tokens || 0;
       } else if (obj.type === "message_start" && obj.message?.usage) {
         tokens.input = obj.message.usage.input_tokens || 0;
-      } else if (obj.result) {
-        // Simple result format
-        textParts.push(obj.result);
       } else if (obj.cost_usd) {
         cost = obj.cost_usd;
       }
@@ -216,9 +217,29 @@ export type ProgressCallback = (event: ProgressEvent) => void;
 export class LLMExecutor {
   private settings: LLMPluginSettings;
   private activeProcess: ChildProcess | null = null;
+  // Track session IDs per provider for continuation
+  private sessionIds: Partial<Record<LLMProvider, string>> = {};
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
+  }
+
+  /**
+   * Clear session for a specific provider or all providers
+   */
+  clearSession(provider?: LLMProvider): void {
+    if (provider) {
+      delete this.sessionIds[provider];
+    } else {
+      this.sessionIds = {};
+    }
+  }
+
+  /**
+   * Check if we have an active session for a provider
+   */
+  hasSession(provider: LLMProvider): boolean {
+    return this.sessionIds[provider] !== undefined;
   }
 
   /**
@@ -376,7 +397,7 @@ export class LLMExecutor {
       child.stderr?.on("data", (data: Buffer) => {
         const chunk = data.toString();
         stderr += chunk;
-        this.debug("stderr:", chunk);
+        this.debug("stderr:", chunk.slice(0, 500) + (chunk.length > 500 ? "..." : ""));
       });
 
       child.on("error", (error) => {
@@ -444,6 +465,25 @@ export class LLMExecutor {
     if (provider === "claude" && this.settings.allowFileWrites) {
       // Skip interactive permission prompts since we can't respond to them
       defaultCmd.push("--dangerously-skip-permissions");
+    }
+
+    // Add session continuation flags per provider
+    const sessionId = this.sessionIds[provider];
+    if (sessionId) {
+      this.debug(`Resuming ${provider} session:`, sessionId);
+      switch (provider) {
+        case "claude":
+          defaultCmd.push("--resume", sessionId);
+          break;
+        case "opencode":
+          defaultCmd.push("--session", sessionId);
+          break;
+        case "gemini":
+          // Gemini uses --resume with session index or "latest"
+          defaultCmd.push("--resume", sessionId);
+          break;
+        // Codex uses a different pattern (resume subcommand) - not easily supported here
+      }
     }
 
     if (config.additionalArgs) {
@@ -514,9 +554,13 @@ export class LLMExecutor {
 
     this.debug("Claude event type:", eventType, "subtype:", obj.subtype);
 
-    // System init - show that we're starting
+    // System init - capture session_id for continuation and show that we're starting
     if (eventType === "system" && obj.subtype === "init") {
-      this.debug("Claude: returning system init status");
+      const sessionId = obj.session_id as string | undefined;
+      if (sessionId) {
+        this.sessionIds.claude = sessionId;
+        this.debug("Claude session started:", sessionId);
+      }
       return { type: "status", message: "Connected to Claude..." };
     }
 
@@ -642,8 +686,15 @@ export class LLMExecutor {
     // Debug log all events with key fields
     this.debug("OpenCode event type:", type, "part keys:", part ? Object.keys(part).join(", ") : "none");
 
-    // Step start - indicates processing has begun
+    // Step start - indicates processing has begun, capture session ID
     if (type === "step_start") {
+      // Capture session ID for continuation (in root or part)
+      const sessionId = (obj.sessionID || part?.sessionID) as string | undefined;
+      if (sessionId && !this.sessionIds.opencode) {
+        this.sessionIds.opencode = sessionId;
+        this.debug("OpenCode session started:", sessionId);
+      }
+
       const metadata = part?.metadata as Record<string, unknown> | undefined;
       const provider = metadata?.provider as string | undefined;
       const model = metadata?.model as string | undefined;
