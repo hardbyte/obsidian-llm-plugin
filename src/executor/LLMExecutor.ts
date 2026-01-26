@@ -24,7 +24,7 @@ interface ParsedResponse {
  */
 const DEFAULT_COMMANDS: Record<LLMProvider, string[]> = {
   claude: ["claude", "--verbose", "--output-format", "stream-json"],
-  gemini: ["gemini", "-y", "--output-format", "json"],
+  gemini: ["gemini", "--output-format", "json"],
   codex: ["codex", "exec", "--skip-git-repo-check"],
   opencode: ["opencode", "run", "--format", "json"],
 };
@@ -387,8 +387,8 @@ export class LLMExecutor {
       const [cmd, ...args] = command;
 
       // Most LLM CLIs accept prompt via stdin or as final argument
-      // We'll use stdin piping for claude/gemini, args for others
-      const useStdin = provider === "claude" || provider === "gemini";
+      // Claude uses stdin, Gemini/codex/opencode use positional args
+      const useStdin = provider === "claude";
 
       if (!useStdin) {
         args.push(prompt);
@@ -492,11 +492,9 @@ export class LLMExecutor {
           this.debug("Process killed by signal:", signal);
           reject(new Error(`Process was killed${signal ? ` by ${signal}` : ""}`));
         } else {
-          reject(
-            new Error(
-              `${cmd} exited with code ${code}${stderr ? `: ${stderr}` : ""}`
-            )
-          );
+          // Parse stderr for known error patterns and provide helpful messages
+          const errorMessage = this.parseErrorMessage(provider, stderr, code);
+          reject(new Error(errorMessage));
         }
       });
 
@@ -542,6 +540,31 @@ export class LLMExecutor {
       defaultCmd.push("--dangerously-skip-permissions");
     }
 
+    // Add model flag if specified
+    if (config.model) {
+      this.debug(`Using model for ${provider}:`, config.model);
+      switch (provider) {
+        case "claude":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "gemini":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "opencode":
+          defaultCmd.push("--model", config.model);
+          break;
+        case "codex":
+          defaultCmd.push("--model", config.model);
+          break;
+      }
+    }
+
+    // Add Gemini yolo mode (auto-confirm dangerous operations)
+    if (provider === "gemini" && config.yoloMode) {
+      this.debug("Gemini yolo mode enabled");
+      defaultCmd.push("-y");
+    }
+
     // Add session continuation flags per provider
     const sessionId = this.sessionIds[provider];
     if (sessionId) {
@@ -566,6 +589,54 @@ export class LLMExecutor {
     }
 
     return defaultCmd;
+  }
+
+  /**
+   * Parse error messages from CLI stderr and provide helpful user-facing messages
+   */
+  private parseErrorMessage(provider: LLMProvider, stderr: string, exitCode: number): string {
+    const stderrLower = stderr.toLowerCase();
+
+    // Model not found errors
+    if (stderrLower.includes("modelnot found") ||
+        stderrLower.includes("model not found") ||
+        stderrLower.includes("requested entity was not found") ||
+        stderrLower.includes("invalid model")) {
+      // Try to extract model name from stderr
+      const modelMatch = stderr.match(/model[:\s]+["']?([a-zA-Z0-9._-]+)["']?/i);
+      const modelName = modelMatch ? modelMatch[1] : "specified model";
+      return `Model not found: "${modelName}". Check your ${provider} settings and verify the model name is correct. Available models may have changed - check the provider's documentation.`;
+    }
+
+    // Authentication errors
+    if (stderrLower.includes("authentication") ||
+        stderrLower.includes("unauthorized") ||
+        stderrLower.includes("api key") ||
+        stderrLower.includes("not authenticated")) {
+      return `Authentication failed for ${provider}. Please check your API key or credentials are configured correctly.`;
+    }
+
+    // Rate limiting
+    if (stderrLower.includes("rate limit") || stderrLower.includes("quota exceeded")) {
+      return `Rate limit exceeded for ${provider}. Please wait a moment and try again.`;
+    }
+
+    // Network errors
+    if (stderrLower.includes("network") ||
+        stderrLower.includes("connection") ||
+        stderrLower.includes("econnrefused") ||
+        stderrLower.includes("timeout")) {
+      return `Network error connecting to ${provider}. Please check your internet connection.`;
+    }
+
+    // CLI not found
+    if (stderrLower.includes("command not found") || stderrLower.includes("not recognized")) {
+      return `The ${provider} CLI is not installed or not in PATH. Please install it first.`;
+    }
+
+    // Default: return the stderr with exit code
+    const truncatedStderr = stderr.length > 500 ? stderr.slice(0, 500) + "..." : stderr;
+    return `${provider} CLI exited with code ${exitCode}${truncatedStderr ? `: ${truncatedStderr}` : ""}`;
   }
 
   /**

@@ -5,7 +5,14 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test:e2e": "npm run build && wdio run ./wdio.conf.ts",
+    "test:e2e:fast": "npm run build && wdio run ./wdio.conf.ts --spec test/specs/plugin.e2e.ts",
+    "test:e2e:claude": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @claude",
+    "test:e2e:gemini": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @gemini",
+    "test:e2e:providers": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @provider",
+    "test:e2e:files": "npm run build && wdio run ./wdio.conf.ts -- --mochaOpts.grep @files",
+    "wdio": "wdio run ./wdio.conf.ts"
   },
   "keywords": [
     "obsidian",
@@ -20,11 +27,20 @@
   "author": "Brian",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.19.30",
+    "@wdio/cli": "^9.23.2",
+    "@wdio/globals": "^9.23.0",
+    "@wdio/local-runner": "^9.23.2",
+    "@wdio/mocha-framework": "^9.23.2",
+    "@wdio/spec-reporter": "^9.23.2",
     "builtin-modules": "^3.3.0",
     "esbuild": "^0.25.12",
+    "expect-webdriverio": "^5.6.3",
     "obsidian": "latest",
     "tslib": "^2.4.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "wdio-obsidian-reporter": "^2.2.1",
+    "wdio-obsidian-service": "^2.2.1"
   }
 }

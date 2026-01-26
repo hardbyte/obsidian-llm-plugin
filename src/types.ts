@@ -9,6 +9,8 @@ export type LLMProvider = "claude" | "opencode" | "codex" | "gemini";
 export interface ProviderConfig {
   /** Whether this provider is enabled */
   enabled: boolean;
+  /** Model to use (provider-specific, e.g., "claude-3-5-haiku-latest", "gemini-2.0-flash") */
+  model?: string;
   /** Custom command to invoke (if different from default) */
   customCommand?: string;
   /** Additional CLI arguments */
@@ -17,7 +19,43 @@ export interface ProviderConfig {
   envVars?: Record<string, string>;
   /** Timeout in seconds (optional - uses default if not set) */
   timeout?: number;
+  /** Gemini: Enable yolo mode (auto-confirm dangerous operations) */
+  yoloMode?: boolean;
 }
+
+/**
+ * Common model options per provider
+ */
+export const PROVIDER_MODELS: Record<LLMProvider, { value: string; label: string }[]> = {
+  claude: [
+    { value: "", label: "Default (CLI default)" },
+    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+    { value: "claude-opus-4-20250514", label: "Claude Opus 4" },
+    { value: "claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet" },
+    { value: "claude-3-5-haiku-latest", label: "Claude 3.5 Haiku (fast)" },
+  ],
+  gemini: [
+    { value: "", label: "Default (CLI default)" },
+    { value: "gemini-3-flash-preview", label: "Gemini 3 Flash (fast)" },
+    { value: "gemini-3-pro-preview", label: "Gemini 3 Pro" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  ],
+  opencode: [
+    { value: "", label: "Default (CLI default)" },
+    { value: "claude-sonnet", label: "Claude Sonnet" },
+    { value: "claude-haiku", label: "Claude Haiku (fast)" },
+    { value: "gpt-4o", label: "GPT-4o" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini (fast)" },
+  ],
+  codex: [
+    { value: "", label: "Default (CLI default)" },
+    { value: "gpt-5", label: "GPT-5" },
+    { value: "gpt-5-mini", label: "GPT-5 Mini (fast)" },
+    { value: "gpt-5-nano", label: "GPT-5 Nano (fastest)" },
+    { value: "gpt-4.1", label: "GPT-4.1" },
+  ],
+};
 
 /**
  * Plugin settings

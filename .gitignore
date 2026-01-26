@@ -20,3 +20,15 @@ data.json
 
 # Deliberate workflow
 .deliberate/
+
+# E2E test artifacts
+test/vault/.obsidian/workspace.json
+test/vault/.obsidian/workspace-mobile.json
+test/vault/.obsidian/plugins/
+test/vault/.obsidian/core-plugins.json
+test/vault/.obsidian/community-plugins.json
+test/vault/.obsidian/hotkeys.json
+test/vault/.obsidian/appearance.json
+test/vault/.trash/
+.wdio-obsidian/
+.obsidian-cache/

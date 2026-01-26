@@ -1,6 +1,7 @@
 import { App, FuzzySuggestModal, PluginSettingTab, Setting, TFile } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider } from "../types";
+import { PROVIDER_MODELS } from "../types";
 
 /**
  * Modal for selecting a markdown file from the vault
@@ -225,6 +226,22 @@ export class LLMSettingTab extends PluginSettingTab {
         });
       });
 
+    // Model selection
+    const modelOptions = PROVIDER_MODELS[provider];
+    new Setting(settingsContainer)
+      .setName("Model")
+      .setDesc("Select which model to use for this provider")
+      .addDropdown((dropdown) => {
+        modelOptions.forEach((option) => {
+          dropdown.addOption(option.value, option.label);
+        });
+        dropdown.setValue(providerConfig.model ?? "");
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.providers[provider].model = value || undefined;
+          await this.plugin.saveSettings();
+        });
+      });
+
     new Setting(settingsContainer)
       .setName("Custom Command")
       .setDesc("Override the default CLI command (leave empty for default)")
@@ -236,6 +253,20 @@ export class LLMSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
       });
+
+    // Gemini-specific: Yolo mode
+    if (provider === "gemini") {
+      new Setting(settingsContainer)
+        .setName("Yolo Mode")
+        .setDesc("Auto-confirm dangerous operations without prompting. Required for non-interactive use.")
+        .addToggle((toggle) => {
+          toggle.setValue(providerConfig.yoloMode ?? false);
+          toggle.onChange(async (value) => {
+            this.plugin.settings.providers[provider].yoloMode = value;
+            await this.plugin.saveSettings();
+          });
+        });
+    }
 
     // Timeout override (optional)
     const timeoutSetting = new Setting(settingsContainer)

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "types": [
+      "node",
+      "mocha",
+      "@wdio/globals/types"
+    ]
+  },
+  "include": [
+    "./**/*.ts",
+    "../wdio.conf.ts"
+  ],
+  "exclude": ["vault"]
+}

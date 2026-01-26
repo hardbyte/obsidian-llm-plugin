@@ -256,13 +256,14 @@ export default class LLMPlugin extends Plugin {
   }
 
   /**
-   * Update the status bar with current provider info
+   * Update the status bar with current provider and model info
    * @param provider Optional provider to display (uses default if not specified)
    */
   updateStatusBar(provider?: LLMProvider) {
     if (!this.statusBarEl) return;
 
     const displayProvider = provider ?? this.settings.defaultProvider;
+    const providerConfig = this.settings.providers[displayProvider];
     const providerNames: Record<string, string> = {
       claude: "Claude",
       opencode: "OpenCode",
@@ -271,13 +272,55 @@ export default class LLMPlugin extends Plugin {
     };
 
     this.statusBarEl.empty();
+    this.statusBarEl.addClass("llm-status-bar");
 
     const indicator = this.statusBarEl.createSpan({ cls: "llm-status-indicator" });
-    this.statusBarEl.createSpan({ text: ` LLM: ${providerNames[displayProvider] || displayProvider}` });
+
+    // Build status text with provider and model
+    let statusText = providerNames[displayProvider] || displayProvider;
+    if (providerConfig?.model) {
+      // Show abbreviated model name
+      statusText += ` (${this.formatModelName(providerConfig.model)})`;
+    } else {
+      // Indicate CLI default is being used
+      statusText += " (default)";
+    }
+
+    this.statusBarEl.createSpan({
+      text: ` LLM: ${statusText}`,
+      cls: "llm-status-text",
+    });
 
     // Check if provider is enabled
-    if (this.settings.providers[displayProvider]?.enabled) {
+    if (providerConfig?.enabled) {
       indicator.addClass("active");
     }
+  }
+
+  /**
+   * Format model name for display (abbreviate long names)
+   */
+  private formatModelName(model: string): string {
+    // Common abbreviations
+    const abbreviations: Record<string, string> = {
+      "claude-3-5-haiku-latest": "haiku",
+      "claude-3-5-sonnet-latest": "sonnet-3.5",
+      "claude-sonnet-4-20250514": "sonnet-4",
+      "claude-opus-4-20250514": "opus-4",
+      "gemini-3.0-flash": "flash-3.0",
+      "gemini-2.0-flash-lite": "flash-lite",
+      "gemini-2.0-flash": "flash-2.0",
+      "gemini-2.5-flash": "flash-2.5",
+      "gemini-2.5-pro": "pro-2.5",
+      "gpt-4o-mini": "4o-mini",
+      "gpt-4o": "4o",
+      "gpt-5-nano": "5-nano",
+      "gpt-5-mini": "5-mini",
+      "gpt-5": "5",
+      "claude-sonnet": "sonnet",
+      "claude-haiku": "haiku",
+    };
+
+    return abbreviations[model] || model;
   }
 }
