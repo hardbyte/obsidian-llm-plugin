@@ -167,22 +167,22 @@ export class ChatView extends ItemView {
         cls: "llm-message-time",
       });
 
-      // Add action buttons for assistant messages
+      // Add action buttons for all messages
+      const actionsEl = headerEl.createDiv({ cls: "llm-message-actions" });
+
+      // Copy button (for both user and assistant messages)
+      const copyBtn = actionsEl.createEl("button", {
+        cls: "llm-action-btn",
+        attr: { "aria-label": "Copy to clipboard" },
+      });
+      setIcon(copyBtn, "copy");
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(msg.content);
+        new Notice("Copied to clipboard");
+      });
+
+      // Create note button (only for assistant messages)
       if (msg.role === "assistant") {
-        const actionsEl = headerEl.createDiv({ cls: "llm-message-actions" });
-
-        // Copy button
-        const copyBtn = actionsEl.createEl("button", {
-          cls: "llm-action-btn",
-          attr: { "aria-label": "Copy to clipboard" },
-        });
-        setIcon(copyBtn, "copy");
-        copyBtn.addEventListener("click", () => {
-          navigator.clipboard.writeText(msg.content);
-          new Notice("Copied to clipboard");
-        });
-
-        // Create note button
         const createNoteBtn = actionsEl.createEl("button", {
           cls: "llm-action-btn",
           attr: { "aria-label": "Create note from response" },
