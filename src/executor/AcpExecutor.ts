@@ -18,12 +18,20 @@ import {
   type ContentChunk,
   type ToolCall,
   type SessionConfigOption,
+  type SessionModelState,
+  type ModelInfo,
 } from "@agentclientprotocol/sdk";
 import type { LLMPluginSettings, LLMProvider, ProgressEvent } from "../types";
 
 export interface ThinkingOption {
   id: string;
   name: string;
+}
+
+export interface CurrentModelInfo {
+  id: string;
+  name: string;
+  description?: string;
 }
 
 // Convert Node streams to Web streams
@@ -89,6 +97,7 @@ export class AcpExecutor {
   private debug: (...args: unknown[]) => void;
   private progressCallback: ((event: ProgressEvent) => void) | null = null;
   private configOptions: SessionConfigOption[] = [];
+  private modelState: SessionModelState | null = null;
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
@@ -236,6 +245,13 @@ export class AcpExecutor {
     this.configOptions = sessionResponse.configOptions ?? [];
     this.debug("Config options available:", this.configOptions.map((o) => o.id));
 
+    // Store model state from session response
+    this.modelState = sessionResponse.models ?? null;
+    if (this.modelState) {
+      this.debug("Current model:", this.modelState.currentModelId);
+      this.debug("Available models:", this.modelState.availableModels.map((m) => m.modelId));
+    }
+
     // Set model if configured
     const providerConfig = this.settings.providers[provider];
     if (providerConfig.model) {
@@ -246,6 +262,14 @@ export class AcpExecutor {
           modelId: providerConfig.model,
         });
         this.debug("Model set successfully");
+        // Update local model state to reflect the change
+        if (this.modelState) {
+          this.modelState = {
+            ...this.modelState,
+            currentModelId: providerConfig.model,
+          };
+          this.debug("Updated model state, current:", this.modelState.currentModelId);
+        }
       } catch (err) {
         // Model selection is experimental - log but don't fail
         this.debug("Failed to set model (may not be supported):", err);
@@ -478,6 +502,7 @@ export class AcpExecutor {
     this.currentProvider = null;
     this.progressCallback = null;
     this.configOptions = [];
+    this.modelState = null;
   }
 
   /**
@@ -492,5 +517,48 @@ export class AcpExecutor {
    */
   getProvider(): LLMProvider | null {
     return this.currentProvider;
+  }
+
+  /**
+   * Get current model information
+   */
+  getCurrentModel(): CurrentModelInfo | null {
+    if (!this.modelState) {
+      return null;
+    }
+
+    const currentId = this.modelState.currentModelId;
+    const modelInfo = this.modelState.availableModels.find(
+      (m) => m.modelId === currentId
+    );
+
+    if (modelInfo) {
+      return {
+        id: modelInfo.modelId,
+        name: modelInfo.name,
+        description: modelInfo.description ?? undefined,
+      };
+    }
+
+    // Model ID exists but not in available models list - return just the ID
+    return {
+      id: currentId,
+      name: currentId,
+    };
+  }
+
+  /**
+   * Get list of available models
+   */
+  getAvailableModels(): CurrentModelInfo[] {
+    if (!this.modelState) {
+      return [];
+    }
+
+    return this.modelState.availableModels.map((m) => ({
+      id: m.modelId,
+      name: m.name,
+      description: m.description ?? undefined,
+    }));
   }
 }

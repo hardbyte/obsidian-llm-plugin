@@ -258,8 +258,9 @@ export default class LLMPlugin extends Plugin {
   /**
    * Update the status bar with current provider and model info
    * @param provider Optional provider to display (uses default if not specified)
+   * @param actualModelName Optional actual model name from ACP session (overrides configured model display)
    */
-  updateStatusBar(provider?: LLMProvider) {
+  updateStatusBar(provider?: LLMProvider, actualModelName?: string) {
     if (!this.statusBarEl) return;
 
     const displayProvider = provider ?? this.settings.defaultProvider;
@@ -278,8 +279,11 @@ export default class LLMPlugin extends Plugin {
 
     // Build status text with provider and model
     let statusText = providerNames[displayProvider] || displayProvider;
-    if (providerConfig?.model) {
-      // Show abbreviated model name
+    if (actualModelName) {
+      // Use actual model name from ACP session
+      statusText += ` (${this.formatModelName(actualModelName)})`;
+    } else if (providerConfig?.model) {
+      // Show configured model name
       statusText += ` (${this.formatModelName(providerConfig.model)})`;
     } else {
       // Indicate CLI default is being used

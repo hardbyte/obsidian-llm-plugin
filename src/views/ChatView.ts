@@ -512,6 +512,12 @@ export class ChatView extends ItemView {
           if (!this.acpExecutor.isConnected() || this.acpExecutor.getProvider() !== this.currentProvider) {
             onProgress({ type: "status", message: "Connecting to ACP agent..." });
             await this.acpExecutor.connect(this.currentProvider, vaultPath, { onProgress });
+
+            // Update status bar with actual model from ACP session
+            const currentModel = this.acpExecutor.getCurrentModel();
+            if (currentModel) {
+              this.plugin.updateStatusBar(this.currentProvider, currentModel.name);
+            }
           }
 
           const acpResponse = await this.acpExecutor.prompt(contextPrompt, { onProgress });
