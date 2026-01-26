@@ -357,7 +357,7 @@ export class LLMExecutor {
       child.stdout?.on("data", (data: Buffer) => {
         const chunk = data.toString();
         stdout += chunk;
-        this.debug("stdout chunk:", chunk.slice(0, 200) + (chunk.length > 200 ? "..." : ""));
+        this.debug("stdout chunk:", chunk.slice(0, 500) + (chunk.length > 500 ? "..." : ""));
 
         // Parse streaming events
         const events = this.parseStreamingEvents(provider, chunk);
@@ -620,8 +620,8 @@ export class LLMExecutor {
    * Parse OpenCode streaming JSON events
    *
    * OpenCode outputs events like:
-   * - {"type":"step_start",...} - step beginning
-   * - {"type":"text","part":{"text":"..."}} - text content
+   * - {"type":"step_start","part":{"id":"...","metadata":{"provider":"..."}}} - step beginning
+   * - {"type":"text","part":{"id":"...","content":"..."}} - text content
    * - {"type":"tool_use","part":{"name":"...","input":{...}}} - tool call
    * - {"type":"tool_result","part":{"output":"..."}} - tool result
    * - {"type":"step_finish",...} - step complete
@@ -630,12 +630,19 @@ export class LLMExecutor {
     const type = obj.type as string;
     const part = obj.part as Record<string, unknown> | undefined;
 
-    // Debug log all events to help identify structure
-    this.debug("OpenCode event:", JSON.stringify(obj));
+    // Debug log all events with key fields
+    this.debug("OpenCode event type:", type, "part keys:", part ? Object.keys(part).join(", ") : "none");
 
     // Step start - indicates processing has begun
     if (type === "step_start") {
+      const metadata = part?.metadata as Record<string, unknown> | undefined;
+      const provider = metadata?.provider as string | undefined;
+      const model = metadata?.model as string | undefined;
       const stepType = obj.step_type as string | undefined;
+
+      if (provider || model) {
+        return { type: "status", message: `Using ${model || provider}...` };
+      }
       if (stepType) {
         return { type: "status", message: `Starting ${stepType}...` };
       }
@@ -647,11 +654,15 @@ export class LLMExecutor {
       return null; // Don't show "complete" for every step
     }
 
-    // Text output - check both part.text and direct text field
+    // Text output - check multiple possible locations for content
     if (type === "text") {
-      const textContent = (part?.text || obj.text) as string | undefined;
+      const textContent = (part?.text || part?.content || part?.value || obj.text || obj.content) as string | undefined;
       if (textContent) {
         return { type: "text", content: textContent };
+      }
+      // If we have a part but no text found, log it for debugging
+      if (part) {
+        this.debug("OpenCode text event - part contents:", JSON.stringify(part).slice(0, 300));
       }
     }
 
