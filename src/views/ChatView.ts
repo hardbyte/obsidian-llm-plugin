@@ -230,6 +230,9 @@ export class ChatView extends ItemView {
 
         // Add change handlers for checkboxes in task lists
         this.attachCheckboxHandlers(contentEl, msg);
+
+        // Add click handlers for buttons
+        this.attachButtonHandlers(contentEl);
       } else {
         // User messages as plain text
         contentEl.setText(msg.content);
@@ -762,7 +765,8 @@ export class ChatView extends ItemView {
 
     // Add formatting hints for Obsidian
     contextParts.push(
-      "Formatting: When referencing Obsidian notes, use wiki links like [[Note Name]] or [[path/to/Note]] without backticks - they will render as clickable links."
+      "Formatting: When referencing Obsidian notes, use wiki links like [[Note Name]] or [[path/to/Note]] without backticks - they will render as clickable links. " +
+      "You can use interactive elements: checkboxes (- [ ] item) and HTML buttons (<button>Label</button>) - when the user interacts with them, you'll be notified."
     );
 
     // Add today's daily note context
@@ -958,6 +962,37 @@ export class ChatView extends ItemView {
     }
 
     msg.content = lines.join("\n");
+  }
+
+  /**
+   * Attach click handlers to buttons in rendered markdown
+   */
+  private attachButtonHandlers(contentEl: HTMLElement) {
+    const buttons = contentEl.querySelectorAll<HTMLButtonElement>("button");
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", (e) => {
+        e.preventDefault();
+        const buttonText = button.textContent?.trim() ?? "";
+        if (buttonText) {
+          this.notifyButtonClick(buttonText);
+        }
+      });
+    });
+  }
+
+  /**
+   * Send a message to the LLM about a button click
+   */
+  private notifyButtonClick(buttonText: string) {
+    const message = `[clicked: "${buttonText}"]`;
+
+    if (this.inputEl && !this.isLoading) {
+      this.inputEl.value = message;
+      this.sendMessage();
+    } else if (this.isLoading) {
+      new Notice(`Clicked: ${buttonText}`);
+    }
   }
 
   /**
