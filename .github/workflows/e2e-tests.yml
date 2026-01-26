@@ -36,7 +36,9 @@ jobs:
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
       - name: Run E2E tests
-        run: npm run wdio
+        # Skip @slow tests in CI (they require real LLM API credentials)
+        # Run locally with: npm run wdio (full suite) or npm run wdio -- --mochaOpts.grep "@slow" (slow only)
+        run: npm run wdio -- --mochaOpts.grep "^(?!.*@slow).*$"
         env:
           DISPLAY: ':99'
 
