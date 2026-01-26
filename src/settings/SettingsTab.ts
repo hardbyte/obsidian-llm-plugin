@@ -1,7 +1,8 @@
-import { App, FuzzySuggestModal, PluginSettingTab, Setting, TFile } from "obsidian";
+import { App, DropdownComponent, FuzzySuggestModal, PluginSettingTab, Setting, TFile } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider } from "../types";
 import { PROVIDER_MODELS, ACP_SUPPORTED_PROVIDERS } from "../types";
+import { fetchModelsForProvider, type ModelOption } from "../utils/modelFetcher";
 
 /**
  * Modal for selecting a markdown file from the vault
@@ -226,21 +227,8 @@ export class LLMSettingTab extends PluginSettingTab {
         });
       });
 
-    // Model selection
-    const modelOptions = PROVIDER_MODELS[provider];
-    new Setting(settingsContainer)
-      .setName("Model")
-      .setDesc("Select which model to use for this provider")
-      .addDropdown((dropdown) => {
-        modelOptions.forEach((option) => {
-          dropdown.addOption(option.value, option.label);
-        });
-        dropdown.setValue(providerConfig.model ?? "");
-        dropdown.onChange(async (value) => {
-          this.plugin.settings.providers[provider].model = value || undefined;
-          await this.plugin.saveSettings();
-        });
-      });
+    // Model selection - with dynamic fetching and custom input
+    this.addModelSetting(settingsContainer, provider, providerConfig.model ?? "");
 
     new Setting(settingsContainer)
       .setName("Custom Command")
@@ -320,6 +308,130 @@ export class LLMSettingTab extends PluginSettingTab {
       timeoutInput.value = "";
       await this.plugin.saveSettings();
     });
+  }
+
+  /**
+   * Add model selection setting with dropdown + custom input
+   * Fetches available models dynamically for providers that support it
+   */
+  private addModelSetting(container: HTMLElement, provider: LLMProvider, currentValue: string): void {
+    const setting = new Setting(container)
+      .setName("Model")
+      .setDesc("Select a model or enter a custom model ID");
+
+    let dropdown: DropdownComponent | null = null;
+    let customInput: HTMLInputElement | null = null;
+    let isCustomMode = false;
+
+    // Check if current value is in the static list (to determine if using custom)
+    const staticModels = PROVIDER_MODELS[provider];
+    const isCurrentValueInList = staticModels.some((m) => m.value === currentValue);
+    isCustomMode = currentValue !== "" && !isCurrentValueInList;
+
+    // Add dropdown
+    setting.addDropdown((dd) => {
+      dropdown = dd;
+
+      // Add static options first (will be updated with dynamic ones)
+      this.populateModelDropdown(dd, staticModels, currentValue, isCustomMode);
+
+      dd.onChange(async (value) => {
+        if (value === "__custom__") {
+          // Switch to custom mode
+          if (customInput) {
+            customInput.style.display = "inline-block";
+            customInput.focus();
+          }
+          isCustomMode = true;
+        } else {
+          // Use selected model
+          if (customInput) {
+            customInput.style.display = "none";
+            customInput.value = "";
+          }
+          isCustomMode = false;
+          this.plugin.settings.providers[provider].model = value || undefined;
+          await this.plugin.saveSettings();
+        }
+      });
+
+      // Fetch dynamic models in the background
+      if (provider === "opencode") {
+        this.fetchAndUpdateModels(dd, provider, currentValue, isCustomMode);
+      }
+    });
+
+    // Add custom input (hidden by default unless in custom mode)
+    customInput = setting.controlEl.createEl("input", {
+      type: "text",
+      cls: "llm-custom-model-input",
+      attr: {
+        placeholder: "Enter model ID...",
+      },
+    });
+    customInput.style.display = isCustomMode ? "inline-block" : "none";
+    customInput.style.marginLeft = "8px";
+    customInput.style.width = "150px";
+
+    if (isCustomMode) {
+      customInput.value = currentValue;
+    }
+
+    customInput.addEventListener("change", async () => {
+      const value = customInput!.value.trim();
+      this.plugin.settings.providers[provider].model = value || undefined;
+      await this.plugin.saveSettings();
+    });
+  }
+
+  /**
+   * Populate dropdown with model options
+   */
+  private populateModelDropdown(
+    dropdown: DropdownComponent,
+    models: ModelOption[],
+    currentValue: string,
+    isCustomMode: boolean
+  ): void {
+    // Clear existing options
+    dropdown.selectEl.empty();
+
+    // Add model options
+    models.forEach((option) => {
+      dropdown.addOption(option.value, option.label);
+    });
+
+    // Add custom option at the end
+    dropdown.addOption("__custom__", "Custom model...");
+
+    // Set current value
+    if (isCustomMode) {
+      dropdown.setValue("__custom__");
+    } else {
+      dropdown.setValue(currentValue);
+    }
+  }
+
+  /**
+   * Fetch models dynamically and update dropdown
+   */
+  private async fetchAndUpdateModels(
+    dropdown: DropdownComponent,
+    provider: LLMProvider,
+    currentValue: string,
+    isCustomMode: boolean
+  ): Promise<void> {
+    try {
+      const models = await fetchModelsForProvider(provider);
+
+      // Check if current value is in the new list
+      const isInList = models.some((m) => m.value === currentValue);
+      const shouldUseCustom = isCustomMode || (currentValue !== "" && !isInList);
+
+      this.populateModelDropdown(dropdown, models, currentValue, shouldUseCustom);
+    } catch {
+      // Keep static models on error
+    }
   }
 
   private getDefaultCommand(provider: LLMProvider): string {
