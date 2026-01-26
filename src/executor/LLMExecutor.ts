@@ -618,19 +618,33 @@ export class LLMExecutor {
 
   /**
    * Parse OpenCode streaming JSON events
+   *
+   * OpenCode outputs events like:
+   * - {"type":"step_start",...} - step beginning
+   * - {"type":"text","part":{"text":"..."}} - text content
+   * - {"type":"tool_use","part":{"name":"...","input":{...}}} - tool call
+   * - {"type":"tool_result","part":{"output":"..."}} - tool result
+   * - {"type":"step_finish",...} - step complete
    */
   private parseOpenCodeEvent(obj: Record<string, unknown>): ProgressEvent | null {
     const type = obj.type as string;
     const part = obj.part as Record<string, unknown> | undefined;
 
-    // Step start - indicates processing has begun (thinking indicator)
+    // Debug log all events to help identify structure
+    this.debug("OpenCode event:", JSON.stringify(obj));
+
+    // Step start - indicates processing has begun
     if (type === "step_start") {
-      return { type: "status", message: "Thinking..." };
+      const stepType = obj.step_type as string | undefined;
+      if (stepType) {
+        return { type: "status", message: `Starting ${stepType}...` };
+      }
+      return { type: "status", message: "Processing..." };
     }
 
     // Step finish - processing complete
     if (type === "step_finish") {
-      return { type: "status", message: "Complete" };
+      return null; // Don't show "complete" for every step
     }
 
     // Text output - check both part.text and direct text field
@@ -641,24 +655,66 @@ export class LLMExecutor {
       }
     }
 
-    // Thinking
-    if (type === "thinking" && part?.thinking) {
-      return { type: "thinking", content: part.thinking as string };
+    // Thinking/reasoning content
+    if (type === "thinking" || type === "reasoning") {
+      const content = (part?.thinking || part?.content || obj.thinking) as string | undefined;
+      if (content) {
+        return { type: "thinking", content };
+      }
+      return { type: "status", message: "Thinking..." };
     }
 
-    // Tool calls
-    if (type === "tool_call" || type === "tool_start") {
-      const toolName = (part?.tool || part?.name || obj.tool) as string | undefined;
+    // Tool use events - extract detailed information
+    if (type === "tool_use" || type === "tool_call" || type === "tool_start") {
+      const toolName = (part?.name || part?.tool || obj.name || obj.tool) as string | undefined;
+      const input = (part?.input || obj.input) as Record<string, unknown> | undefined;
+
+      // Extract meaningful info from tool input (like Claude does)
+      let inputSummary: string | undefined;
+      if (input) {
+        if (input.file_path || input.path || input.file) {
+          inputSummary = (input.file_path || input.path || input.file) as string;
+        } else if (input.pattern || input.glob) {
+          inputSummary = (input.pattern || input.glob) as string;
+        } else if (input.command || input.cmd) {
+          inputSummary = ((input.command || input.cmd) as string).slice(0, 50);
+        } else if (input.query || input.search) {
+          inputSummary = ((input.query || input.search) as string).slice(0, 50);
+        } else if (input.url) {
+          inputSummary = input.url as string;
+        }
+      }
+
       return {
         type: "tool_use",
         tool: toolName || "tool",
-        input: part?.input as string | undefined,
+        input: inputSummary,
         status: "started",
       };
     }
 
+    // Tool result - show completion with relevant info
     if (type === "tool_result" || type === "tool_end") {
-      return { type: "status", message: "Tool completed" };
+      const toolName = (part?.name || obj.name) as string | undefined;
+      const output = part?.output as string | undefined;
+      if (toolName) {
+        return { type: "status", message: `${toolName} completed` };
+      }
+      return null; // Silent completion if no tool name
+    }
+
+    // Content block events (some LLMs use this pattern)
+    if (type === "content_block_start" || type === "content_block_delta") {
+      const contentType = (obj.content_block as Record<string, unknown>)?.type as string | undefined;
+      if (contentType === "tool_use") {
+        const name = (obj.content_block as Record<string, unknown>)?.name as string;
+        return { type: "tool_use", tool: name || "tool", status: "started" };
+      }
+    }
+
+    // Message events
+    if (type === "message_start" || type === "message.start") {
+      return { type: "status", message: "Generating response..." };
     }
 
     return null;
