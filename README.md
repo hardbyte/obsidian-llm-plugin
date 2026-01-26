@@ -113,7 +113,7 @@ npm run dev
 npm run build
 ```
 
-### Testing in Obsidian
+### Manual Testing in Obsidian
 
 1. Create a test vault or use an existing one
 2. Create a symbolic link from the build output to your vault's plugins folder:
@@ -123,6 +123,27 @@ npm run build
 3. Run `npm run dev` to watch for changes
 4. In Obsidian, enable the plugin and use Cmd/Ctrl+R to reload after changes
 5. Open the Developer Console (Cmd/Ctrl+Shift+I) to see logs and errors
+
+### E2E Testing
+
+The plugin uses [wdio-obsidian-service](https://github.com/jesse-r-s-hines/wdio-obsidian-service) for end-to-end testing against a real Obsidian instance.
+
+```bash
+# Run E2E tests (builds first, then launches Obsidian)
+npm run test:e2e
+
+# Run E2E tests only (assumes already built)
+npm run wdio
+```
+
+The test suite:
+- Verifies plugin loads correctly
+- Tests chat panel UI elements
+- Tests user interaction (typing, sending messages)
+- Tests settings navigation
+- Tests context toggle functionality
+
+Tests run automatically on GitHub Actions for pushes and pull requests.
 
 ## Architecture Notes
 
