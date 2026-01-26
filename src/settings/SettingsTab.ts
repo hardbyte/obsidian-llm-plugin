@@ -268,6 +268,19 @@ export class LLMSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
         });
+
+      // Thinking mode setting (only shown when ACP is enabled)
+      new Setting(settingsContainer)
+        .setName("Thinking Mode (ACP)")
+        .setDesc('Extended thinking level. Common values: "none", "low", "medium", "high". Leave empty for agent default. Only applies with ACP.')
+        .addText((text) => {
+          text.setPlaceholder("Agent default");
+          text.setValue(providerConfig.thinkingMode ?? "");
+          text.onChange(async (value) => {
+            this.plugin.settings.providers[provider].thinkingMode = value.trim() || undefined;
+            await this.plugin.saveSettings();
+          });
+        });
     }
 
     // Timeout override (optional)

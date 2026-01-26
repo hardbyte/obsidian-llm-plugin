@@ -17,8 +17,14 @@ import {
   type RequestPermissionResponse,
   type ContentChunk,
   type ToolCall,
+  type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import type { LLMPluginSettings, LLMProvider, ProgressEvent } from "../types";
+
+export interface ThinkingOption {
+  id: string;
+  name: string;
+}
 
 // Convert Node streams to Web streams
 function nodeToWebReadable(nodeStream: NodeJS.ReadableStream): ReadableStream<Uint8Array> {
@@ -82,6 +88,7 @@ export class AcpExecutor {
   private currentProvider: LLMProvider | null = null;
   private debug: (...args: unknown[]) => void;
   private progressCallback: ((event: ProgressEvent) => void) | null = null;
+  private configOptions: SessionConfigOption[] = [];
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
@@ -225,6 +232,10 @@ export class AcpExecutor {
     this.sessionId = sessionResponse.sessionId;
     this.debug("Session created:", this.sessionId);
 
+    // Store config options from session response
+    this.configOptions = sessionResponse.configOptions ?? [];
+    this.debug("Config options available:", this.configOptions.map((o) => o.id));
+
     // Set model if configured
     const providerConfig = this.settings.providers[provider];
     if (providerConfig.model) {
@@ -239,6 +250,11 @@ export class AcpExecutor {
         // Model selection is experimental - log but don't fail
         this.debug("Failed to set model (may not be supported):", err);
       }
+    }
+
+    // Set thinking mode if configured and available
+    if (providerConfig.thinkingMode) {
+      await this.setThinkingMode(providerConfig.thinkingMode);
     }
   }
 
@@ -338,6 +354,115 @@ export class AcpExecutor {
   }
 
   /**
+   * Get available thinking/reasoning options from the agent
+   * Returns null if thinking mode is not supported
+   */
+  getThinkingOptions(): ThinkingOption[] | null {
+    const thoughtLevelOption = this.configOptions.find(
+      (opt) => opt.category === "thought_level"
+    );
+
+    if (!thoughtLevelOption) {
+      return null;
+    }
+
+    // Extract options from the config (handles both flat options and groups)
+    const options: ThinkingOption[] = [];
+    const selectOptions = (thoughtLevelOption as { options?: unknown }).options;
+
+    if (Array.isArray(selectOptions)) {
+      for (const opt of selectOptions) {
+        if (typeof opt === "object" && opt !== null) {
+          // Could be a direct option or a group
+          if ("group" in opt && "options" in opt) {
+            // It's a group - extract options from it
+            const groupOpts = (opt as { options: unknown[] }).options;
+            for (const groupOpt of groupOpts) {
+              if (typeof groupOpt === "object" && groupOpt !== null && "id" in groupOpt) {
+                const typedOpt = groupOpt as { id: string; name?: string };
+                options.push({
+                  id: typedOpt.id,
+                  name: typedOpt.name ?? typedOpt.id,
+                });
+              }
+            }
+          } else if ("id" in opt) {
+            // Direct option
+            const typedOpt = opt as { id: string; name?: string };
+            options.push({
+              id: typedOpt.id,
+              name: typedOpt.name ?? typedOpt.id,
+            });
+          }
+        }
+      }
+    }
+
+    return options.length > 0 ? options : null;
+  }
+
+  /**
+   * Get the current thinking mode value
+   */
+  getCurrentThinkingMode(): string | null {
+    const thoughtLevelOption = this.configOptions.find(
+      (opt) => opt.category === "thought_level"
+    );
+
+    if (!thoughtLevelOption) {
+      return null;
+    }
+
+    return (thoughtLevelOption as { currentValue?: string }).currentValue ?? null;
+  }
+
+  /**
+   * Set the thinking/reasoning mode
+   */
+  async setThinkingMode(value: string): Promise<boolean> {
+    if (!this.connection || !this.sessionId) {
+      this.debug("Cannot set thinking mode - not connected");
+      return false;
+    }
+
+    const thoughtLevelOption = this.configOptions.find(
+      (opt) => opt.category === "thought_level"
+    );
+
+    if (!thoughtLevelOption) {
+      this.debug("Thinking mode not supported by this agent");
+      return false;
+    }
+
+    try {
+      this.debug("Setting thinking mode to:", value);
+      const response = await this.connection.unstable_setSessionConfigOption({
+        sessionId: this.sessionId,
+        configId: thoughtLevelOption.id,
+        value,
+      });
+
+      // Update local config options with response
+      if (response.configOptions) {
+        this.configOptions = response.configOptions;
+      }
+
+      this.debug("Thinking mode set successfully");
+      return true;
+    } catch (err) {
+      this.debug("Failed to set thinking mode:", err);
+      return false;
+    }
+  }
+
+  /**
+   * Check if thinking mode is supported
+   */
+  supportsThinkingMode(): boolean {
+    return this.getThinkingOptions() !== null;
+  }
+
+  /**
    * Disconnect from the agent
    */
   async disconnect(): Promise<void> {
@@ -352,6 +477,7 @@ export class AcpExecutor {
     this.sessionId = null;
     this.currentProvider = null;
     this.progressCallback = null;
+    this.configOptions = [];
   }
 
   /**

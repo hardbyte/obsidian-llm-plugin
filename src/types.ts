@@ -23,6 +23,8 @@ export interface ProviderConfig {
   yoloMode?: boolean;
   /** Use ACP (Agent Client Protocol) for persistent connection (supported: claude, opencode, gemini) */
   useAcp?: boolean;
+  /** Thinking mode level for ACP (e.g., "none", "low", "medium", "high") - agent-specific */
+  thinkingMode?: string;
 }
 
 /**
