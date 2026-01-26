@@ -512,8 +512,11 @@ export class LLMExecutor {
   private parseClaudeEvent(obj: Record<string, unknown>): ProgressEvent | null {
     const eventType = obj.type as string;
 
+    this.debug("Claude event type:", eventType, "subtype:", obj.subtype);
+
     // System init - show that we're starting
     if (eventType === "system" && obj.subtype === "init") {
+      this.debug("Claude: returning system init status");
       return { type: "status", message: "Connected to Claude..." };
     }
 
@@ -522,8 +525,12 @@ export class LLMExecutor {
       const message = obj.message as Record<string, unknown> | undefined;
       const content = message?.content as Array<Record<string, unknown>> | undefined;
 
+      this.debug("Claude assistant message, content blocks:", content?.length || 0);
+
       if (content && content.length > 0) {
         for (const block of content) {
+          this.debug("Claude content block type:", block.type);
+
           if (block.type === "tool_use") {
             const toolName = block.name as string;
             const input = block.input as Record<string, unknown> | undefined;
@@ -542,6 +549,7 @@ export class LLMExecutor {
               }
             }
 
+            this.debug("Claude tool_use:", toolName, inputSummary);
             return {
               type: "tool_use",
               tool: toolName,
@@ -553,6 +561,7 @@ export class LLMExecutor {
           if (block.type === "text") {
             const text = block.text as string;
             if (text) {
+              this.debug("Claude text block, length:", text.length);
               return { type: "text", content: text };
             }
           }
