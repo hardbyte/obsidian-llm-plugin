@@ -24,7 +24,7 @@ interface ParsedResponse {
  */
 const DEFAULT_COMMANDS: Record<LLMProvider, string[]> = {
   claude: ["claude", "--verbose", "--output-format", "stream-json"],
-  gemini: ["gemini", "-y", "--output-format", "json"],
+  gemini: ["gemini", "--output-format", "json"],
   codex: ["codex", "exec", "--skip-git-repo-check"],
   opencode: ["opencode", "run", "--format", "json"],
 };
@@ -387,8 +387,8 @@ export class LLMExecutor {
       const [cmd, ...args] = command;
 
       // Most LLM CLIs accept prompt via stdin or as final argument
-      // We'll use stdin piping for claude/gemini, args for others
-      const useStdin = provider === "claude" || provider === "gemini";
+      // Claude uses stdin, Gemini/codex/opencode use positional args
+      const useStdin = provider === "claude";
 
       if (!useStdin) {
         args.push(prompt);
@@ -559,6 +559,12 @@ export class LLMExecutor {
           defaultCmd.push("--model", config.model);
           break;
       }
+    }
+
+    // Add Gemini yolo mode (auto-confirm dangerous operations)
+    if (provider === "gemini" && config.yoloMode) {
+      this.debug("Gemini yolo mode enabled");
+      defaultCmd.push("-y");
     }
 
     // Add session continuation flags per provider

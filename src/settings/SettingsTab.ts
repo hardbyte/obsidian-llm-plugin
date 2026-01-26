@@ -254,6 +254,20 @@ export class LLMSettingTab extends PluginSettingTab {
         });
       });
 
+    // Gemini-specific: Yolo mode
+    if (provider === "gemini") {
+      new Setting(settingsContainer)
+        .setName("Yolo Mode")
+        .setDesc("Auto-confirm dangerous operations without prompting. Required for non-interactive use.")
+        .addToggle((toggle) => {
+          toggle.setValue(providerConfig.yoloMode ?? false);
+          toggle.onChange(async (value) => {
+            this.plugin.settings.providers[provider].yoloMode = value;
+            await this.plugin.saveSettings();
+          });
+        });
+    }
+
     // Timeout override (optional)
     const timeoutSetting = new Setting(settingsContainer)
       .setName("Timeout Override (seconds)")

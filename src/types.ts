@@ -19,6 +19,8 @@ export interface ProviderConfig {
   envVars?: Record<string, string>;
   /** Timeout in seconds (optional - uses default if not set) */
   timeout?: number;
+  /** Gemini: Enable yolo mode (auto-confirm dangerous operations) */
+  yoloMode?: boolean;
 }
 
 /**
