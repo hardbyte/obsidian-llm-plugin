@@ -14,6 +14,7 @@ An Obsidian plugin that integrates with LLM CLI tools (Claude, Codex, OpenCode, 
 - **Create Notes from Responses** - Save LLM responses as new notes in your vault
 - **Quick Prompts** - Commands for summarizing, explaining, and improving selected text
 - **Session Continuation** - Follow-up messages use session resumption for faster responses
+- **ACP Mode** - Optional persistent connection mode for faster multi-turn conversations
 
 ## Requirements
 
@@ -93,8 +94,13 @@ Copy `main.js`, `manifest.json`, and `styles.css` to your vault's `.obsidian/plu
 
 Each provider can be configured with:
 - Enable/disable
+- Model selection (dropdown with common models, or enter custom model ID)
 - Custom command (if CLI is named differently)
 - Timeout override
+- **ACP Mode** (experimental) - Use Agent Client Protocol for persistent connections
+- **Thinking Mode** (ACP only) - Control extended thinking level (none/low/medium/high)
+
+When ACP mode is enabled, the available models list is populated dynamically from the connected agent.
 
 ### System Prompt
 
@@ -153,28 +159,27 @@ The plugin captures session IDs from CLI tools and uses them for subsequent requ
 - **Claude**: `--resume <session_id>`
 - **OpenCode**: `--session <session_id>`
 - **Gemini**: `--resume <session_id>`
-- **Codex**: Uses `resume` subcommand (different pattern, not fully supported)
+- **Codex**: `--resume <session_id>`
 
 This improves response times for follow-up messages. Clearing the conversation resets the session.
 
-### Future Improvements
+### ACP Mode (Agent Client Protocol)
 
-**ACP (Agent Client Protocol)**: We're exploring ACP support for improved performance and capabilities. ACP is a standardized protocol (like LSP for AI agents) that allows:
-- Long-lived agent processes (no startup overhead per request)
-- Streaming responses via JSON-RPC
-- Terminal integration (agents can run commands)
-- Standardized session management
+ACP is a standardized protocol (like LSP but for AI agents) that provides:
+- **Persistent connections** - No startup overhead per request
+- **Streaming responses** - Real-time updates via JSON-RPC
+- **Dynamic model discovery** - Available models fetched from the agent
+- **Extended thinking** - Support for thinking mode levels
 
-CLI tools with ACP support:
-- `opencode acp` - OpenCode's ACP server
-- `gemini --experimental-acp` - Gemini CLI's ACP mode
-- Claude Code - via `@zed-industries/claude-code-acp` adapter
+All four providers support ACP mode:
+- **Claude** - via `@anthropic-ai/claude-code-acp` adapter
+- **OpenCode** - native `opencode acp` server
+- **Gemini** - via `gemini --experimental-acp` flag
+- **Codex** - via `@zed-industries/codex-acp` adapter
 
-See also: [obsidian-agent-client](https://github.com/RAIT-09/obsidian-agent-client) for an alternative ACP-based approach.
+Enable ACP in provider settings. The first message establishes a connection; subsequent messages reuse it for faster responses.
 
-**Long-lived CLI Process**: As an alternative to ACP, some tools support headless server modes:
-- `opencode serve` / `opencode attach` - Headless server mode
-- `codex mcp-server` - MCP server mode
+See also: [obsidian-agent-client](https://github.com/RAIT-09/obsidian-agent-client) for an alternative ACP-based approach
 
 ## License
 

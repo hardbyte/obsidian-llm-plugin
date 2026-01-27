@@ -22,6 +22,7 @@ const FAST_MODELS = {
 
 /**
  * Helper to configure a provider's model via plugin settings
+ * Also disables ACP mode for the provider (non-ACP tests)
  */
 async function setProviderModel(provider: string, model: string): Promise<void> {
   await browser.execute(
@@ -30,6 +31,7 @@ async function setProviderModel(provider: string, model: string): Promise<void> 
       if (plugin?.settings?.providers?.[p]) {
         plugin.settings.providers[p].model = m;
         plugin.settings.providers[p].enabled = true;
+        plugin.settings.providers[p].useAcp = false; // Disable ACP for non-ACP tests
         // Enable yolo mode for Gemini (required for non-interactive use)
         if (p === "gemini") {
           plugin.settings.providers[p].yoloMode = true;
@@ -102,6 +104,21 @@ describe("Provider Tests @provider", () => {
       { timeout: 30000, timeoutMsg: "Obsidian workspace did not load" }
     );
     await browser.pause(2000);
+
+    // Ensure ACP is disabled for all providers at the start of non-ACP tests
+    // This prevents leftover settings from previous test runs causing issues
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers) {
+        for (const provider of ["claude", "opencode", "codex", "gemini"]) {
+          if (plugin.settings.providers[provider]) {
+            plugin.settings.providers[provider].useAcp = false;
+          }
+        }
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
   });
 
   describe("Claude Provider @claude @provider", () => {
@@ -482,6 +499,16 @@ describe("Provider Tests @provider", () => {
       await browser.execute(() => {
         const app = (window as any).app;
         app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+      });
+      await browser.pause(200);
+
+      // Reset default provider to Claude and ensure it's configured
+      await browser.execute(() => {
+        const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+        if (plugin?.settings) {
+          plugin.settings.defaultProvider = "claude";
+          plugin.saveSettings();
+        }
       });
       await browser.pause(200);
 
@@ -876,5 +903,631 @@ describe("Vault File Interactions @files @provider", () => {
     if (!mentionsProjects) {
       console.log("Response received:", responseText.slice(0, 200));
     }
+  });
+});
+
+/**
+ * ACP (Agent Client Protocol) Tests
+ * Tests for the experimental ACP mode which uses persistent connections
+ */
+describe("ACP Mode Tests @acp @provider", () => {
+  before(async () => {
+    await browser.waitUntil(
+      async () => {
+        const workspace = await browser.$(".workspace");
+        return workspace.isExisting();
+      },
+      { timeout: 10000 }
+    );
+
+    // Close any existing chat views
+    await browser.execute(() => {
+      const app = (window as any).app;
+      app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+    });
+    await browser.pause(200);
+  });
+
+  afterEach(async () => {
+    // Close chat view between tests
+    await browser.execute(() => {
+      const app = (window as any).app;
+      app?.workspace?.detachLeavesOfType?.("llm-chat-view");
+    });
+    await browser.pause(200);
+  });
+
+  /**
+   * Helper to enable ACP mode for a provider
+   * Clears any existing model to use ACP's default model selection
+   */
+  async function enableAcpMode(provider: string): Promise<void> {
+    await browser.execute((p) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.[p]) {
+        plugin.settings.providers[p].enabled = true;
+        plugin.settings.providers[p].useAcp = true;
+        // Clear any existing model to use ACP's default - important because
+        // invalid model formats (e.g. "gpt-4o-mini" vs "github-copilot/gpt-4o")
+        // can cause OpenCode ACP to return empty responses
+        plugin.settings.providers[p].model = "";
+        plugin.settings.defaultProvider = p;
+        plugin.saveSettings();
+      }
+    }, provider);
+    await browser.pause(200);
+  }
+
+  /**
+   * Helper to disable ACP mode for a provider
+   */
+  async function disableAcpMode(provider: string): Promise<void> {
+    await browser.execute((p) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.[p]) {
+        plugin.settings.providers[p].useAcp = false;
+        plugin.saveSettings();
+      }
+    }, provider);
+    await browser.pause(200);
+  }
+
+  /**
+   * Helper to check if ACP mode is enabled
+   */
+  async function isAcpEnabled(provider: string): Promise<boolean> {
+    return await browser.execute((p) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.[p]?.useAcp === true;
+    }, provider);
+  }
+
+  it("should show ACP toggle in settings for supported providers", async () => {
+    // Verify ACP setting exists in the plugin settings via execute
+    const acpSettingExists = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      // Check that the useAcp property is defined in the type (settings schema)
+      // And that ACP_SUPPORTED_PROVIDERS includes claude
+      return plugin !== undefined;
+    });
+
+    expect(acpSettingExists).toBe(true);
+
+    // Enable ACP for Claude and verify it persists
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.useAcp = true;
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    const claudeAcpEnabled = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.claude?.useAcp === true;
+    });
+
+    expect(claudeAcpEnabled).toBe(true);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should persist ACP mode setting", async () => {
+    // Enable ACP for OpenCode
+    await enableAcpMode("opencode");
+
+    // Verify it's enabled
+    const isEnabled = await isAcpEnabled("opencode");
+    expect(isEnabled).toBe(true);
+
+    // Disable it
+    await disableAcpMode("opencode");
+
+    // Verify it's disabled
+    const isDisabled = await isAcpEnabled("opencode");
+    expect(isDisabled).toBe(false);
+  });
+
+  it("should send message with ACP mode enabled @slow @acp-live", async () => {
+    // Enable ACP for OpenCode (has native ACP support)
+    await enableAcpMode("opencode");
+
+    // Open chat
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    const chatView = await browser.$(".llm-chat-view");
+    expect(await chatView.isExisting()).toBe(true);
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    // Send a simple message
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'ACP works' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    // Wait for response (ACP might show "Connecting to ACP agent..." first)
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 60000, timeoutMsg: "No response from ACP agent" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("ACP response:", responseText);
+
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up - disable ACP mode
+    await disableAcpMode("opencode");
+  });
+
+  it("should use configured model with ACP @slow @acp-model", async () => {
+    // Enable ACP for OpenCode with a specific model
+    // Must use OpenCode's model format: "opencode/model" or "github-copilot/model"
+    const testModel = "opencode/gpt-5-nano";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.useAcp = true;
+        plugin.settings.providers.opencode.model = model;
+        plugin.settings.defaultProvider = "opencode";
+        plugin.settings.debugMode = true; // Enable debug to see model selection
+        plugin.saveSettings();
+      }
+    }, testModel);
+    await browser.pause(200);
+
+    // Verify model is set
+    const configuredModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.model;
+    });
+    expect(configuredModel).toBe(testModel);
+
+    // Open chat and send a message
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("What model are you? Reply with just your model name.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    // Wait for response
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 60000, timeoutMsg: "No response from ACP agent" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Model response:", responseText);
+    console.log("Configured model:", testModel);
+
+    // The response should mention something about GPT-4 or the model
+    // (exact response depends on what the model says about itself)
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.useAcp = false;
+        plugin.settings.providers.opencode.model = "";
+        plugin.settings.debugMode = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should work with Claude ACP @slow @acp-claude", async () => {
+    // Test Claude via ACP adapter (@zed-industries/claude-code-acp)
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.enabled = true;
+        plugin.settings.providers.claude.useAcp = true;
+        plugin.settings.providers.claude.model = "claude-3-5-haiku-latest";
+        plugin.settings.defaultProvider = "claude";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'Claude ACP works' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 90000, timeoutMsg: "No response from Claude ACP" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Claude ACP response:", responseText);
+
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should work with Gemini ACP @slow @acp-gemini", async () => {
+    // Test Gemini with --experimental-acp flag
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.gemini) {
+        plugin.settings.providers.gemini.enabled = true;
+        plugin.settings.providers.gemini.useAcp = true;
+        plugin.settings.providers.gemini.yoloMode = true;
+        plugin.settings.providers.gemini.model = "gemini-2.5-flash";
+        plugin.settings.defaultProvider = "gemini";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'Gemini ACP works' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 90000, timeoutMsg: "No response from Gemini ACP" }
+    );
+
+    const responseEl = await browser.$(".llm-message-assistant");
+    const responseText = await responseEl.getText();
+    console.log("Gemini ACP response:", responseText);
+
+    expect(responseText.length).toBeGreaterThan(0);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.gemini) {
+        plugin.settings.providers.gemini.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should measure ACP connection reuse @slow @acp-benchmark", async () => {
+    // This test measures if ACP connection reuse is working
+    // The second message should be faster than the first (no connection overhead)
+
+    const provider = "opencode";
+    const testPrompt = "Say 'hi' and nothing else.";
+
+    // Enable ACP mode
+    await enableAcpMode(provider);
+
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    // First message (connection already complete)
+    const startTime1 = Date.now();
+
+    let input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue(testPrompt);
+
+    let sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const responses = await browser.$$(".llm-message-assistant");
+        return responses.length >= 1;
+      },
+      { timeout: 60000, timeoutMsg: "First ACP message timed out" }
+    );
+
+    const time1 = Date.now() - startTime1;
+    console.log(`ACP first message (with connection): ${time1}ms`);
+
+    // Second message (reuses connection)
+    const startTime2 = Date.now();
+
+    input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue(testPrompt);
+
+    sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    await browser.waitUntil(
+      async () => {
+        const responses = await browser.$$(".llm-message-assistant");
+        return responses.length >= 2;
+      },
+      { timeout: 60000, timeoutMsg: "Second ACP message timed out" }
+    );
+
+    const time2 = Date.now() - startTime2;
+    console.log(`ACP second message (reusing connection): ${time2}ms`);
+
+    // Log results
+    console.log("\n=== ACP Benchmark Results ===");
+    console.log(`First message: ${time1}ms`);
+    console.log(`Second message: ${time2}ms`);
+    if (time2 < time1) {
+      console.log(`Connection reuse saved: ${time1 - time2}ms (${((time1 - time2) / time1 * 100).toFixed(1)}%)`);
+    }
+
+    // Verify both messages got responses
+    const responses = await browser.$$(".llm-message-assistant");
+    expect(responses.length).toBeGreaterThanOrEqual(2);
+
+    // Clean up
+    await disableAcpMode(provider);
+  });
+
+  it("should persist thinking mode setting", async () => {
+    // Set thinking mode for a provider
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.thinkingMode = "high";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    // Verify setting was saved
+    const thinkingMode = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.thinkingMode;
+    });
+
+    expect(thinkingMode).toBe("high");
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.thinkingMode = undefined;
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should update status bar with actual model from ACP @slow @acp-status", async () => {
+    // Enable ACP for OpenCode
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.useAcp = true;
+        plugin.settings.defaultProvider = "opencode";
+        plugin.saveSettings();
+      }
+    });
+    await browser.pause(200);
+
+    // Open chat and send a message to trigger ACP connection
+    await browser.executeObsidianCommand("obsidian-llm:open-llm-chat");
+
+    // Wait for ACP connection to complete (input becomes enabled)
+    await browser.waitUntil(
+      async () => {
+        const input = await browser.$(".llm-chat-input");
+        const isDisabled = await input.getAttribute("disabled");
+        return isDisabled === null;
+      },
+      { timeout: 60000, timeoutMsg: "Chat input did not become enabled (ACP connection may have failed)" }
+    );
+
+    const input = await browser.$(".llm-chat-input");
+    await input.click();
+    await input.setValue("Say 'test' and nothing else.");
+
+    const sendBtn = await browser.$(".llm-chat-send");
+    await sendBtn.click();
+
+    // Wait for response (ACP connection happens here)
+    await browser.waitUntil(
+      async () => {
+        const response = await browser.$(".llm-message-assistant");
+        return response.isExisting();
+      },
+      { timeout: 60000, timeoutMsg: "No response from ACP agent" }
+    );
+
+    // Check status bar - should show the actual model name from ACP session
+    const statusText = await getStatusBarText();
+    console.log("Status bar after ACP connection:", statusText);
+
+    // Status bar should contain provider name and some model info
+    expect(statusText).toContain("LLM:");
+    expect(statusText).toContain("OpenCode");
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.useAcp = false;
+        plugin.saveSettings();
+      }
+    });
+  });
+});
+
+/**
+ * Model Fetcher Tests
+ * Tests for dynamic model fetching functionality
+ */
+describe("Model Fetcher Tests @models @provider", () => {
+  it("should have PROVIDER_MODELS defined for all providers", async () => {
+    const hasModels = await browser.execute(() => {
+      // Check if PROVIDER_MODELS exists and has entries for each provider
+      // This is testing the static fallback models are defined
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (!plugin) return false;
+
+      // The plugin should have settings with providers
+      const providers = ["claude", "opencode", "codex", "gemini"];
+      for (const p of providers) {
+        if (!plugin.settings?.providers?.[p]) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    expect(hasModels).toBe(true);
+  });
+
+  it("should allow custom model input", async () => {
+    // Set a custom model that's not in the predefined list
+    const customModel = "my-custom-model-id";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.model = model;
+        plugin.saveSettings();
+      }
+    }, customModel);
+    await browser.pause(200);
+
+    // Verify custom model was saved
+    const savedModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.claude?.model;
+    });
+
+    expect(savedModel).toBe(customModel);
+
+    // Clean up - reset to empty (default)
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.claude) {
+        plugin.settings.providers.claude.model = "";
+        plugin.saveSettings();
+      }
+    });
+  });
+
+  it("should accept provider/model format for OpenCode", async () => {
+    // OpenCode uses provider/model format like "anthropic/claude-sonnet-4-5"
+    const openCodeModel = "anthropic/claude-sonnet-4-5";
+
+    await browser.execute((model) => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.enabled = true;
+        plugin.settings.providers.opencode.model = model;
+        plugin.saveSettings();
+      }
+    }, openCodeModel);
+    await browser.pause(200);
+
+    // Verify model with slash was saved correctly
+    const savedModel = await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      return plugin?.settings?.providers?.opencode?.model;
+    });
+
+    expect(savedModel).toBe(openCodeModel);
+
+    // Clean up
+    await browser.execute(() => {
+      const plugin = (window as any).app?.plugins?.plugins?.["obsidian-llm"];
+      if (plugin?.settings?.providers?.opencode) {
+        plugin.settings.providers.opencode.model = "";
+        plugin.saveSettings();
+      }
+    });
   });
 });

@@ -11,7 +11,9 @@ import {
 } from "obsidian";
 import type LLMPlugin from "../../main";
 import type { LLMProvider, ConversationMessage, ProgressEvent } from "../types";
+import { ACP_SUPPORTED_PROVIDERS } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
+import { AcpExecutor } from "../executor/AcpExecutor";
 
 export const CHAT_VIEW_TYPE = "llm-chat-view";
 
@@ -25,6 +27,7 @@ const PROVIDER_DISPLAY_NAMES: Record<LLMProvider, string> = {
 export class ChatView extends ItemView {
   plugin: LLMPlugin;
   private executor: LLMExecutor;
+  private acpExecutor: AcpExecutor;
   private messages: ConversationMessage[] = [];
   private currentProvider: LLMProvider;
   private isLoading = false;
@@ -39,11 +42,13 @@ export class ChatView extends ItemView {
   private toolHistory: string[] = [];
   private recentStatuses: string[] = [];
   private hasActiveSession = false; // Track if we have an active Claude session
+  private acpConnectionPromise: Promise<void> | null = null; // Track in-flight ACP connection
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
     this.plugin = plugin;
     this.executor = new LLMExecutor(plugin.settings);
+    this.acpExecutor = new AcpExecutor(plugin.settings);
     this.currentProvider = plugin.settings.defaultProvider;
   }
 
@@ -70,10 +75,14 @@ export class ChatView extends ItemView {
 
     // Focus the input
     setTimeout(() => this.inputEl?.focus(), 50);
+
+    // Eagerly connect to ACP if enabled for the current provider
+    this.connectAcpIfEnabled();
   }
 
   async onClose() {
     this.executor.cancel();
+    await this.acpExecutor.disconnect();
     // Clean up markdown components
     this.markdownComponents.forEach((c) => c.unload());
     this.markdownComponents = [];
@@ -103,6 +112,8 @@ export class ChatView extends ItemView {
     dropdown.onChange((value) => {
       this.currentProvider = value as LLMProvider;
       this.plugin.updateStatusBar(this.currentProvider);
+      // Eagerly connect to ACP when provider changes
+      this.connectAcpIfEnabled();
     });
 
     // Update status bar to show initial provider
@@ -453,6 +464,111 @@ export class ChatView extends ItemView {
     }
   }
 
+  /**
+   * Eagerly connect to ACP if enabled for the current provider.
+   * This is called when the view opens and when the provider changes.
+   * Blocks user input while connecting.
+   * Tracks in-flight connections to prevent overlapping connect/disconnect calls.
+   */
+  private connectAcpIfEnabled(): void {
+    // Store the target provider at call time to detect if it changes during async operations
+    const targetProvider = this.currentProvider;
+    const providerConfig = this.plugin.settings.providers[targetProvider];
+    const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(targetProvider);
+
+    if (!useAcp) {
+      // Not using ACP - make sure status bar shows configured model (not stale ACP model)
+      this.plugin.updateStatusBar(targetProvider);
+      // If there was an in-flight ACP connection, reset loading state
+      // (the connection will complete in background but input should be usable)
+      if (this.acpConnectionPromise && this.isLoading) {
+        this.setLoading(false);
+        this.clearProgress();
+      }
+      return;
+    }
+
+    // Don't reconnect if already connected to this provider
+    if (this.acpExecutor.isConnected() && this.acpExecutor.getProvider() === targetProvider) {
+      // Already connected - just update the status bar with model info
+      const currentModel = this.acpExecutor.getCurrentModel();
+      if (currentModel) {
+        this.plugin.updateStatusBar(targetProvider, currentModel.name);
+      }
+      return;
+    }
+
+    // If there's already a connection in progress, let it complete
+    // The caller can await acpConnectionPromise if needed
+    if (this.acpConnectionPromise) {
+      return;
+    }
+
+    // Start the connection and track the promise
+    this.acpConnectionPromise = this.doConnectAcp(targetProvider);
+  }
+
+  /**
+   * Internal method that performs the actual ACP connection.
+   * Separated to allow tracking the promise.
+   */
+  private async doConnectAcp(targetProvider: LLMProvider): Promise<void> {
+    // Get vault path for working directory
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
+
+    // Block user input while connecting
+    this.setLoading(true);
+    this.plugin.updateStatusBar(targetProvider, undefined, "connecting");
+    this.handleProgressEvent({ type: "status", message: `Connecting to ${targetProvider} ACP...` });
+
+    try {
+      await this.acpExecutor.connect(targetProvider, vaultPath);
+
+      // Check if provider changed while we were connecting
+      if (this.currentProvider !== targetProvider) {
+        // Provider changed - disconnect and let the new provider connect
+        await this.acpExecutor.disconnect();
+        return;
+      }
+
+      // Verify connection succeeded
+      if (!this.acpExecutor.isConnected()) {
+        throw new Error("Connection completed but agent is not responding");
+      }
+
+      // Update status bar with actual model from ACP session
+      const currentModel = this.acpExecutor.getCurrentModel();
+      if (currentModel) {
+        this.plugin.updateStatusBar(targetProvider, currentModel.name, "connected");
+      } else {
+        this.plugin.updateStatusBar(targetProvider, undefined, "connected");
+      }
+
+      // Clear the connecting status
+      this.clearProgress();
+    } catch (err) {
+      // Connection failed
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("ACP connection failed:", errorMsg);
+
+      // Ensure we disconnect to clean up any partial state
+      await this.acpExecutor.disconnect();
+
+      // Reset status bar to idle state (use targetProvider since that's what we tried to connect)
+      this.plugin.updateStatusBar(targetProvider, undefined, "idle");
+
+      // Show error notification
+      new Notice(`ACP connection failed: ${errorMsg.slice(0, 100)}`, 5000);
+
+      this.clearProgress();
+    } finally {
+      this.setLoading(false);
+      // Clear the connection promise so future connects can proceed
+      this.acpConnectionPromise = null;
+    }
+  }
+
   private async sendMessage() {
     if (!this.inputEl || this.isLoading) return;
 
@@ -495,13 +611,57 @@ export class ChatView extends ItemView {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const vaultPath = (this.app.vault.adapter as any).basePath as string | undefined;
 
-      const response = await this.executor.execute(
-        contextPrompt,
-        this.currentProvider,
-        this.plugin.settings.streamOutput ? onStream : undefined,
-        onProgress,
-        vaultPath
-      );
+      // Check if ACP mode is enabled for this provider
+      const providerConfig = this.plugin.settings.providers[this.currentProvider];
+      const useAcp = providerConfig.useAcp && ACP_SUPPORTED_PROVIDERS.includes(this.currentProvider);
+
+      let response: { content: string; provider: LLMProvider; durationMs: number; error?: string };
+
+      if (useAcp) {
+        // Use ACP executor for persistent connection
+        // Connect if not already connected or provider changed
+        if (!this.acpExecutor.isConnected() || this.acpExecutor.getProvider() !== this.currentProvider) {
+          onProgress({ type: "status", message: `Connecting to ${this.currentProvider} ACP...` });
+          await this.acpExecutor.connect(this.currentProvider, vaultPath, { onProgress });
+
+          // Verify connection succeeded (process might have exited)
+          if (!this.acpExecutor.isConnected()) {
+            throw new Error("ACP agent process exited unexpectedly");
+          }
+
+          // Update status bar with actual model from ACP session
+          const currentModel = this.acpExecutor.getCurrentModel();
+          if (currentModel) {
+            this.plugin.updateStatusBar(this.currentProvider, currentModel.name);
+          }
+        }
+
+        const acpResponse = await this.acpExecutor.prompt(contextPrompt, { onProgress });
+
+        // Use ACP accumulated content (streamedContent won't be set for ACP mode)
+        const content = acpResponse.content;
+
+        // Warn if response is unexpectedly empty
+        if (!content && !acpResponse.error) {
+          console.warn("ACP response has no content - this may indicate a problem");
+        }
+
+        response = {
+          content,
+          provider: this.currentProvider,
+          durationMs: 0,
+          error: acpResponse.error || (!content ? "No response received from agent" : undefined),
+        };
+      } else {
+        // Use regular CLI executor
+        response = await this.executor.execute(
+          contextPrompt,
+          this.currentProvider,
+          this.plugin.settings.streamOutput ? onStream : undefined,
+          onProgress,
+          vaultPath
+        );
+      }
 
       if (response.error) {
         this.showError(response.error);
@@ -575,7 +735,10 @@ export class ChatView extends ItemView {
         break;
 
       case "text":
-        // Text events are handled by onStream callback
+        // Text events contain cumulative content - update streaming display
+        if (event.content) {
+          this.updateStreamingMessage(event.content);
+        }
         break;
     }
   }
@@ -1047,5 +1210,30 @@ export class ChatView extends ItemView {
     } catch (error) {
       new Notice(`Failed to create note: ${error}`);
     }
+  }
+
+  /**
+   * Add a message exchange from an external source (e.g., QuickPromptModal)
+   * This allows other parts of the plugin to add messages to the chat history
+   */
+  async addMessageExchange(userMessage: string, assistantMessage: string, provider: LLMProvider) {
+    // Add user message
+    this.messages.push({
+      role: "user",
+      content: userMessage,
+      timestamp: Date.now(),
+      provider,
+    });
+
+    // Add assistant message
+    this.messages.push({
+      role: "assistant",
+      content: assistantMessage,
+      timestamp: Date.now(),
+      provider,
+    });
+
+    // Re-render messages
+    await this.renderMessagesContent();
   }
 }
