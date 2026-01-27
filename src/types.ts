@@ -101,15 +101,19 @@ export interface LLMPluginSettings {
 export const DEFAULT_PROVIDER_CONFIGS: Record<LLMProvider, ProviderConfig> = {
   claude: {
     enabled: true,
+    useAcp: true,
   },
   opencode: {
     enabled: false,
+    useAcp: true,
   },
   codex: {
     enabled: false,
+    useAcp: true,
   },
   gemini: {
     enabled: false,
+    useAcp: true,
   },
 };
 

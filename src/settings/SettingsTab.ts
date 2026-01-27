@@ -276,8 +276,8 @@ export class LLMSettingTab extends PluginSettingTab {
 
       // ACP toggle - insert before thinking mode setting
       const acpSetting = new Setting(settingsContainer)
-        .setName("Use ACP Mode (Experimental)")
-        .setDesc("Use Agent Client Protocol for persistent connection. Faster for multiple messages but may be less stable.")
+        .setName("Use ACP Mode")
+        .setDesc("Use Agent Client Protocol for persistent connection. Faster for multi-turn conversations. Disable to use CLI subprocess per request.")
         .addToggle((toggle) => {
           toggle.setValue(providerConfig.useAcp ?? false);
           toggle.onChange(async (value) => {
