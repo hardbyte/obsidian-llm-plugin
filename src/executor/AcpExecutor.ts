@@ -164,15 +164,28 @@ export class AcpExecutor {
   }
 
   /**
+   * Check if a command is available in PATH
+   */
+  private async isCommandAvailable(cmd: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const checkCmd = process.platform === "win32" ? "where" : "which";
+      const check = spawn(checkCmd, [cmd], { shell: true });
+      check.on("close", (code) => resolve(code === 0));
+      check.on("error", () => resolve(false));
+    });
+  }
+
+  /**
    * Get the ACP command for a provider
    * Uses provider-specific settings (customCommand, additionalArgs) if configured
    */
-  private getAcpCommand(provider: LLMProvider): { cmd: string; args: string[]; env?: Record<string, string> } | null {
+  private getAcpCommand(provider: LLMProvider): { cmd: string; args: string[]; env?: Record<string, string>; requiresNpx?: boolean } | null {
     const providerConfig = this.settings.providers[provider];
 
     // Get base command and args for each provider
     let baseCmd: string;
     let baseArgs: string[];
+    let requiresNpx = false;
 
     switch (provider) {
       case "opencode":
@@ -180,20 +193,30 @@ export class AcpExecutor {
         baseArgs = ["acp"];
         break;
       case "claude":
-        // Claude uses the ACP adapter package
-        // Use -y flag to avoid interactive prompts from npx
-        baseCmd = "npx";
-        baseArgs = ["-y", "@zed-industries/claude-code-acp"];
+        // Claude uses the ACP adapter package via npx (unless customCommand overrides)
+        if (providerConfig.customCommand) {
+          baseCmd = providerConfig.customCommand;
+          baseArgs = [];
+        } else {
+          baseCmd = "npx";
+          baseArgs = ["-y", "@zed-industries/claude-code-acp"];
+          requiresNpx = true;
+        }
         break;
       case "gemini":
         baseCmd = providerConfig.customCommand || "gemini";
         baseArgs = ["--experimental-acp"];
         break;
       case "codex":
-        // Codex uses the ACP adapter package (like Claude)
-        // Use -y flag to avoid interactive prompts from npx
-        baseCmd = "npx";
-        baseArgs = ["-y", "@zed-industries/codex-acp"];
+        // Codex uses the ACP adapter package via npx (unless customCommand overrides)
+        if (providerConfig.customCommand) {
+          baseCmd = providerConfig.customCommand;
+          baseArgs = [];
+        } else {
+          baseCmd = "npx";
+          baseArgs = ["-y", "@zed-industries/codex-acp"];
+          requiresNpx = true;
+        }
         break;
       default:
         return null;
@@ -207,7 +230,7 @@ export class AcpExecutor {
     // Include provider-specific environment variables
     const env = providerConfig.envVars ? { ...providerConfig.envVars } : undefined;
 
-    return { cmd: baseCmd, args: baseArgs, env };
+    return { cmd: baseCmd, args: baseArgs, env, requiresNpx };
   }
 
   /**
@@ -230,6 +253,19 @@ export class AcpExecutor {
     const acpCommand = this.getAcpCommand(provider);
     if (!acpCommand) {
       throw new Error(`Provider ${provider} does not support ACP`);
+    }
+
+    // Check if npx is available when required
+    if (acpCommand.requiresNpx) {
+      const npxAvailable = await this.isCommandAvailable("npx");
+      if (!npxAvailable) {
+        throw new Error(
+          `ACP for ${provider} requires 'npx' (Node.js) which is not installed or not in PATH.\n\n` +
+          `Options:\n` +
+          `1. Install Node.js from https://nodejs.org/\n` +
+          `2. Set a custom command in settings (e.g., full path to the ACP adapter)`
+        );
+      }
     }
 
     const cwd = workingDirectory ?? process.cwd();
