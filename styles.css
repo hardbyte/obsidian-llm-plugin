@@ -875,3 +875,131 @@
   border-top: 1px solid var(--background-modifier-border);
   margin: 1em 0;
 }
+
+/* Permission Modal */
+.llm-permission-modal {
+  padding: 16px;
+  max-width: 500px;
+}
+
+.llm-permission-header h2 {
+  margin: 0 0 16px 0;
+  color: var(--text-warning);
+}
+
+.llm-permission-tool-info {
+  background: var(--background-secondary);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+}
+
+.llm-permission-action {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-normal);
+}
+
+.llm-permission-file {
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.llm-permission-details {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.llm-permission-detail-item {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.llm-permission-prompt {
+  margin: 0 0 12px 0;
+  color: var(--text-muted);
+}
+
+.llm-permission-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.llm-permission-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9em;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  transition: background-color 0.15s ease;
+}
+
+.llm-permission-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.llm-permission-btn-allow {
+  background: var(--background-modifier-success);
+  border-color: var(--background-modifier-success);
+  color: var(--text-on-accent);
+}
+
+.llm-permission-btn-allow:hover {
+  filter: brightness(1.1);
+}
+
+.llm-permission-btn-allow-always {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.llm-permission-btn-reject {
+  color: var(--text-error);
+}
+
+.llm-permission-btn-reject-always {
+  background: var(--background-modifier-error);
+  border-color: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+.llm-permission-btn-cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+/* Queued message styles */
+.llm-message-queued {
+  opacity: 0.7;
+  border-style: dashed;
+}
+
+.llm-message-queued-badge {
+  background-color: var(--text-muted);
+  color: var(--background-primary);
+  font-size: 0.7em;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.llm-message-user.llm-message-queued {
+  background: var(--interactive-accent);
+  opacity: 0.6;
+}
+
+.llm-message-user.llm-message-queued .llm-message-queued-badge {
+  background-color: var(--text-on-accent);
+  color: var(--interactive-accent);
+}

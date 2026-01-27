@@ -142,6 +142,7 @@ export class AcpExecutor {
   private currentProvider: LLMProvider | null = null;
   private debug: (...args: unknown[]) => void;
   private progressCallback: ((event: ProgressEvent) => void) | null = null;
+  private permissionCallback: ((request: RequestPermissionRequest) => Promise<RequestPermissionResponse>) | null = null;
   private configOptions: SessionConfigOption[] = [];
   private modelState: SessionModelState | null = null;
   private accumulatedContent: string = ""; // Accumulate text content during prompt
@@ -344,8 +345,10 @@ export class AcpExecutor {
       nodeToWebReadable(this.process.stdout)
     );
 
-    // Store the progress callback for use in session updates
+    // Store the callbacks for use in session updates and permission requests
     this.progressCallback = options?.onProgress ?? null;
+    this.permissionCallback = options?.onPermissionRequest ?? null;
+    this.debug("Permission callback set:", this.permissionCallback ? "yes" : "no");
 
     // Create the client handler
     const createClient = (_agent: Agent): Client => ({
@@ -354,10 +357,12 @@ export class AcpExecutor {
         this.handleSessionUpdate(params.update);
       },
       requestPermission: async (params: RequestPermissionRequest) => {
-        this.debug("Permission request:", params);
-        if (options?.onPermissionRequest) {
-          return options.onPermissionRequest(params);
+        this.debug("Permission request received:", params);
+        if (this.permissionCallback) {
+          this.debug("Calling permission callback");
+          return this.permissionCallback(params);
         }
+        this.debug("No permission callback, auto-approving");
         // Default: allow with first option selected
         return {
           outcome: {
@@ -660,9 +665,12 @@ export class AcpExecutor {
     this.lastLogTime = Date.now();
     this.toolCallNames.clear();
 
-    // Update progress callback if provided
+    // Update callbacks if provided
     if (options?.onProgress) {
       this.progressCallback = options.onProgress;
+    }
+    if (options?.onPermissionRequest) {
+      this.permissionCallback = options.onPermissionRequest;
     }
 
     this.debug("Sending prompt:", message.slice(0, 100));
@@ -825,6 +833,7 @@ export class AcpExecutor {
     this.sessionId = null;
     this.currentProvider = null;
     this.progressCallback = null;
+    this.permissionCallback = null;
     this.configOptions = [];
     this.modelState = null;
   }

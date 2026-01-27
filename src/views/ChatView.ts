@@ -9,11 +9,13 @@ import {
   MarkdownView,
   Component,
 } from "obsidian";
+import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk";
 import type LLMPlugin from "../../main";
 import type { LLMProvider, ConversationMessage, ProgressEvent } from "../types";
 import { ACP_SUPPORTED_PROVIDERS } from "../types";
 import { LLMExecutor } from "../executor/LLMExecutor";
 import { AcpExecutor } from "../executor/AcpExecutor";
+import { PermissionModal } from "../modals";
 
 export const CHAT_VIEW_TYPE = "llm-chat-view";
 
@@ -23,6 +25,14 @@ const PROVIDER_DISPLAY_NAMES: Record<LLMProvider, string> = {
   codex: "Codex",
   gemini: "Gemini",
 };
+
+/** Represents a queued message waiting to be sent */
+interface QueuedMessage {
+  content: string;
+  timestamp: number;
+  provider: LLMProvider;
+  includeContext: boolean;
+}
 
 export class ChatView extends ItemView {
   plugin: LLMPlugin;
@@ -45,6 +55,7 @@ export class ChatView extends ItemView {
   private acpConnectionPromise: Promise<void> | null = null; // Track in-flight ACP connection
   private accumulatedThinking: string = ""; // Accumulate thinking content
   private thinkingSectionEl: HTMLDetailsElement | null = null; // Reference to thinking section
+  private messageQueue: QueuedMessage[] = []; // Queue for messages sent while LLM is processing
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -141,6 +152,7 @@ export class ChatView extends ItemView {
     setIcon(clearBtn, "trash-2");
     clearBtn.addEventListener("click", () => {
       this.messages = [];
+      this.messageQueue = []; // Clear queued messages too
       this.executor.clearSession(); // Clear Claude session when conversation is cleared
       this.renderMessagesContent();
     });
@@ -177,8 +189,9 @@ export class ChatView extends ItemView {
     const sourcePath = activeFile?.path ?? "";
 
     for (const msg of this.messages) {
+      const isQueued = (msg as ConversationMessage & { queued?: boolean }).queued;
       const msgEl = this.messagesContainer.createDiv({
-        cls: `llm-message llm-message-${msg.role}`,
+        cls: `llm-message llm-message-${msg.role}${isQueued ? " llm-message-queued" : ""}`,
       });
 
       const headerEl = msgEl.createDiv({ cls: "llm-message-header" });
@@ -186,6 +199,15 @@ export class ChatView extends ItemView {
         text: msg.role === "user" ? "You" : PROVIDER_DISPLAY_NAMES[msg.provider],
         cls: "llm-message-role",
       });
+
+      // Show "Queued" badge for queued messages
+      if (isQueued) {
+        headerEl.createSpan({
+          text: "Queued",
+          cls: "llm-message-queued-badge",
+        });
+      }
+
       headerEl.createSpan({
         text: new Date(msg.timestamp).toLocaleTimeString(),
         cls: "llm-message-time",
@@ -293,30 +315,45 @@ export class ChatView extends ItemView {
   }
 
   /**
-   * Cancel the current request
+   * Cancel the current request and optionally clear the queue
    */
   private cancelRequest() {
     this.executor.cancel();
     this.isLoading = false;
+
+    // If there are queued messages, show how many were cleared
+    const queuedCount = this.messageQueue.length;
+    if (queuedCount > 0) {
+      // Remove queued messages from the display
+      this.messages = this.messages.filter(
+        (m) => !(m as ConversationMessage & { queued?: boolean }).queued
+      );
+      this.messageQueue = [];
+      this.renderMessagesContent();
+      new Notice(`Request cancelled. ${queuedCount} queued message${queuedCount > 1 ? "s" : ""} cleared.`);
+    } else {
+      new Notice("Request cancelled");
+    }
+
     this.updateButtonStates();
     this.clearProgress();
-    new Notice("Request cancelled");
   }
 
   /**
    * Update send/cancel button visibility based on loading state
+   * Note: Input remains enabled during loading to allow message queuing
    */
   private updateButtonStates() {
     if (this.sendBtn) {
-      this.sendBtn.style.display = this.isLoading ? "none" : "block";
-      this.sendBtn.disabled = this.isLoading;
+      // When loading, show "Queue" instead of "Send" to indicate message will be queued
+      this.sendBtn.style.display = "block";
+      this.sendBtn.textContent = this.isLoading ? "Queue" : "Send";
+      // Keep button enabled for queuing
     }
     if (this.cancelBtn) {
       this.cancelBtn.style.display = this.isLoading ? "block" : "none";
     }
-    if (this.inputEl) {
-      this.inputEl.disabled = this.isLoading;
-    }
+    // Input stays enabled to allow typing queued messages
   }
 
   /**
@@ -525,7 +562,9 @@ export class ChatView extends ItemView {
     this.handleProgressEvent({ type: "status", message: `Connecting to ${targetProvider} ACP...` });
 
     try {
-      await this.acpExecutor.connect(targetProvider, vaultPath);
+      await this.acpExecutor.connect(targetProvider, vaultPath, {
+        onPermissionRequest: (request) => this.handlePermissionRequest(request),
+      });
 
       // Check if provider changed while we were connecting
       if (this.currentProvider !== targetProvider) {
@@ -572,29 +611,93 @@ export class ChatView extends ItemView {
   }
 
   private async sendMessage() {
-    if (!this.inputEl || this.isLoading) return;
+    if (!this.inputEl) return;
 
     const prompt = this.inputEl.value.trim();
     if (!prompt) return;
 
-    // Add user message
-    const userMessage: ConversationMessage = {
-      role: "user",
-      content: prompt,
+    // Clear input immediately for better UX
+    this.inputEl.value = "";
+
+    // If already loading, queue the message instead of sending immediately
+    if (this.isLoading) {
+      this.queueMessage(prompt);
+      return;
+    }
+
+    // Process this message
+    await this.processMessage(prompt);
+  }
+
+  /**
+   * Queue a message to be sent after the current request completes
+   */
+  private queueMessage(content: string) {
+    const queuedMessage: QueuedMessage = {
+      content,
       timestamp: Date.now(),
       provider: this.currentProvider,
+      includeContext: this.includeContextToggle?.checked ?? false,
     };
-    this.messages.push(userMessage);
-    await this.renderMessagesContent();
+    this.messageQueue.push(queuedMessage);
 
-    // Clear input
-    this.inputEl.value = "";
+    // Add the message to the UI immediately as a queued message
+    const userMessage: ConversationMessage & { queued?: boolean } = {
+      role: "user",
+      content,
+      timestamp: queuedMessage.timestamp,
+      provider: this.currentProvider,
+    };
+    // Mark as queued for visual distinction
+    (userMessage as ConversationMessage & { queued: boolean }).queued = true;
+    this.messages.push(userMessage);
+
+    // Re-render to show the queued message
+    this.renderMessagesContent();
+
+    // Show feedback
+    const queuePosition = this.messageQueue.length;
+    new Notice(`Message queued (#${queuePosition})`, 2000);
+  }
+
+  /**
+   * Process a message - the core logic extracted from sendMessage
+   */
+  private async processMessage(prompt: string, forceIncludeContext?: boolean) {
+    // Add user message (if not already added as queued)
+    const existingQueuedIndex = this.messages.findIndex(
+      (m) => m.role === "user" && m.content === prompt && (m as ConversationMessage & { queued?: boolean }).queued
+    );
+
+    if (existingQueuedIndex >= 0) {
+      // Remove the queued flag from the message
+      delete (this.messages[existingQueuedIndex] as ConversationMessage & { queued?: boolean }).queued;
+      await this.renderMessagesContent();
+    } else {
+      // Add new user message
+      const userMessage: ConversationMessage = {
+        role: "user",
+        content: prompt,
+        timestamp: Date.now(),
+        provider: this.currentProvider,
+      };
+      this.messages.push(userMessage);
+      await this.renderMessagesContent();
+    }
 
     // Show loading state
     this.setLoading(true);
 
-    // Build conversation context
+    // Build conversation context (use passed includeContext if from queue)
+    const originalToggleState = this.includeContextToggle?.checked;
+    if (forceIncludeContext !== undefined && this.includeContextToggle) {
+      this.includeContextToggle.checked = forceIncludeContext;
+    }
     const contextPrompt = await this.buildContextPrompt(prompt);
+    // Restore toggle state if we changed it
+    if (forceIncludeContext !== undefined && this.includeContextToggle && originalToggleState !== undefined) {
+      this.includeContextToggle.checked = originalToggleState;
+    }
 
     try {
       // Stream callback for real-time text updates
@@ -624,7 +727,10 @@ export class ChatView extends ItemView {
         // Connect if not already connected or provider changed
         if (!this.acpExecutor.isConnected() || this.acpExecutor.getProvider() !== this.currentProvider) {
           onProgress({ type: "status", message: `Connecting to ${this.currentProvider} ACP...` });
-          await this.acpExecutor.connect(this.currentProvider, vaultPath, { onProgress });
+          await this.acpExecutor.connect(this.currentProvider, vaultPath, {
+            onProgress,
+            onPermissionRequest: (request) => this.handlePermissionRequest(request),
+          });
 
           // Verify connection succeeded (process might have exited)
           if (!this.acpExecutor.isConnected()) {
@@ -638,7 +744,10 @@ export class ChatView extends ItemView {
           }
         }
 
-        const acpResponse = await this.acpExecutor.prompt(contextPrompt, { onProgress });
+        const acpResponse = await this.acpExecutor.prompt(contextPrompt, {
+          onProgress,
+          onPermissionRequest: (request) => this.handlePermissionRequest(request),
+        });
 
         // Use ACP accumulated content (streamedContent won't be set for ACP mode)
         const content = acpResponse.content;
@@ -687,7 +796,26 @@ export class ChatView extends ItemView {
     } finally {
       this.setLoading(false);
       this.clearProgress();
+
+      // Process next queued message if any
+      this.processNextQueuedMessage();
     }
+  }
+
+  /**
+   * Process the next message in the queue, if any
+   */
+  private async processNextQueuedMessage() {
+    if (this.messageQueue.length === 0) return;
+
+    const nextMessage = this.messageQueue.shift();
+    if (!nextMessage) return;
+
+    // Small delay for visual feedback that we're moving to next message
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Process the queued message with its original includeContext setting
+    await this.processMessage(nextMessage.content, nextMessage.includeContext);
   }
 
   /**
@@ -753,6 +881,17 @@ export class ChatView extends ItemView {
         }
         break;
     }
+  }
+
+  /**
+   * Handle permission requests from ACP agents
+   * Shows a modal for user to approve/deny the action
+   */
+  private async handlePermissionRequest(
+    request: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
+    const modal = new PermissionModal(this.app, request);
+    return modal.prompt();
   }
 
   /**

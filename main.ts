@@ -2,7 +2,7 @@ import { Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import type { LLMPluginSettings, LLMProvider } from "./src/types";
 import { DEFAULT_SETTINGS } from "./src/types";
 import { LLMSettingTab } from "./src/settings/SettingsTab";
-import { QuickPromptModal } from "./src/modals";
+import { QuickPromptModal, PermissionModal } from "./src/modals";
 import { ChatView, CHAT_VIEW_TYPE } from "./src/views";
 import { LLMExecutor, detectAvailableProviders } from "./src/executor/LLMExecutor";
 
@@ -10,6 +10,9 @@ export default class LLMPlugin extends Plugin {
   settings: LLMPluginSettings;
   private executor: LLMExecutor | null = null;
   private statusBarEl: HTMLElement | null = null;
+
+  // Expose PermissionModal for testing
+  PermissionModal = PermissionModal;
 
   async onload() {
     await this.loadSettings();

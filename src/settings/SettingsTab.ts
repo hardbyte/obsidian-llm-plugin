@@ -183,8 +183,8 @@ export class LLMSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Advanced" });
 
     new Setting(containerEl)
-      .setName("Allow File Writes")
-      .setDesc("Allow LLM to write and edit files. For Claude, this enables --dangerously-skip-permissions flag. Use with caution.")
+      .setName("Allow File Writes (Non-ACP)")
+      .setDesc("For non-ACP mode only: Skip permission prompts for file writes. In ACP mode, permissions are handled via a modal dialog instead.")
       .addToggle((toggle) => {
         toggle.setValue(this.plugin.settings.allowFileWrites);
         toggle.onChange(async (value) => {
