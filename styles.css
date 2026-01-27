@@ -674,6 +674,107 @@
   }
 }
 
+/* Collapsible thinking section */
+.llm-thinking-section {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: var(--background-modifier-message);
+  border-radius: 6px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.llm-thinking-section summary {
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.llm-thinking-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.llm-thinking-section summary::before {
+  content: "▶";
+  font-size: 0.7em;
+  transition: transform 0.2s;
+}
+
+.llm-thinking-section[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.llm-thinking-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.llm-thinking-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.llm-thinking-label {
+  color: var(--text-muted);
+}
+
+.llm-thinking-content {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding: 8px;
+  white-space: pre-wrap;
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  background: var(--background-primary);
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+/* Spinner for pending tools */
+.llm-tool-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+}
+
+.llm-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--text-muted);
+  border-top-color: var(--text-accent);
+  border-radius: 50%;
+  animation: llm-spin 0.8s linear infinite;
+}
+
+/* Tool item states */
+.llm-tool-item-pending .llm-tool-name {
+  color: var(--text-accent);
+}
+
+.llm-tool-item-complete .llm-tool-name {
+  color: var(--text-muted);
+}
+
+/* Tool summary truncation */
+.llm-tool-summary {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Markdown rendering in messages */
 .llm-message-content p {
   margin: 0 0 0.5em 0;

@@ -39,10 +39,12 @@ export class ChatView extends ItemView {
   private progressContainer: HTMLElement | null = null;
   private currentToolUse: string | null = null;
   private markdownComponents: Component[] = [];
-  private toolHistory: string[] = [];
+  private toolHistory: Array<{ name: string; input?: string; status: "started" | "completed" }> = [];
   private recentStatuses: string[] = [];
   private hasActiveSession = false; // Track if we have an active Claude session
   private acpConnectionPromise: Promise<void> | null = null; // Track in-flight ACP connection
+  private accumulatedThinking: string = ""; // Accumulate thinking content
+  private thinkingSectionEl: HTMLDetailsElement | null = null; // Reference to thinking section
 
   constructor(leaf: WorkspaceLeaf, plugin: LLMPlugin) {
     super(leaf);
@@ -704,25 +706,31 @@ export class ChatView extends ItemView {
     switch (event.type) {
       case "tool_use": {
         this.currentToolUse = event.tool;
-        const toolDisplay = event.input
-          ? `${event.tool}: ${event.input}`
-          : event.tool;
-        // Add to tool history if not a duplicate of the last one
-        if (this.toolHistory[this.toolHistory.length - 1] !== toolDisplay) {
-          this.toolHistory.push(toolDisplay);
+        const status = event.status ?? "started";
+
+        // Update existing tool entry if it's an update, otherwise add new
+        const lastTool = this.toolHistory[this.toolHistory.length - 1];
+        if (lastTool && lastTool.name === event.tool && lastTool.input === event.input && status === "completed") {
+          // Update existing tool's status to completed
+          lastTool.status = "completed";
+        } else if (status === "started") {
+          // Add new tool entry
+          this.toolHistory.push({
+            name: event.tool,
+            input: event.input,
+            status,
+          });
         }
-        this.updateProgressDisplay(toolDisplay, "tool");
+        this.updateProgressDisplay(event.tool, "tool");
         break;
       }
 
       case "thinking": {
-        // Show thinking content if available, otherwise generic "Thinking..."
-        // Allow up to 300 chars to show meaningful context
-        const thinkingMessage = event.content
-          ? event.content.slice(0, 300) + (event.content.length > 300 ? "..." : "")
-          : "Thinking...";
-        this.addRecentStatus(thinkingMessage.slice(0, 100)); // Keep recent status shorter
-        this.updateProgressDisplay(thinkingMessage, "thinking");
+        // Accumulate thinking content for collapsible section
+        if (event.content) {
+          this.accumulatedThinking += event.content;
+        }
+        this.updateThinkingSection();
         break;
       }
 
@@ -737,9 +745,48 @@ export class ChatView extends ItemView {
       case "text":
         // Text events contain cumulative content - update streaming display
         if (event.content) {
+          // Collapse thinking section when text starts streaming
+          if (this.thinkingSectionEl && this.thinkingSectionEl.open) {
+            this.thinkingSectionEl.open = false;
+          }
           this.updateStreamingMessage(event.content);
         }
         break;
+    }
+  }
+
+  /**
+   * Update or create the collapsible thinking section
+   */
+  private updateThinkingSection() {
+    if (!this.progressContainer) return;
+
+    // Create thinking section if it doesn't exist
+    if (!this.thinkingSectionEl) {
+      this.thinkingSectionEl = this.progressContainer.createEl("details", {
+        cls: "llm-thinking-section",
+      });
+      this.thinkingSectionEl.open = true; // Open by default while thinking
+
+      const summary = this.thinkingSectionEl.createEl("summary");
+      const iconEl = summary.createSpan({ cls: "llm-thinking-icon" });
+      setIcon(iconEl, "brain");
+      summary.createSpan({ text: " Thinking...", cls: "llm-thinking-label" });
+
+      this.thinkingSectionEl.createDiv({ cls: "llm-thinking-content" });
+    }
+
+    // Update the thinking content
+    const contentEl = this.thinkingSectionEl.querySelector(".llm-thinking-content") as HTMLElement;
+    if (contentEl && this.accumulatedThinking) {
+      contentEl.setText(this.accumulatedThinking);
+      // Scroll to bottom of thinking content
+      contentEl.scrollTop = contentEl.scrollHeight;
+    }
+
+    // Scroll messages container to keep progress visible
+    if (this.messagesContainer) {
+      this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
     }
   }
 
@@ -757,23 +804,27 @@ export class ChatView extends ItemView {
 
   /**
    * Collapse consecutive repeated tools into counts
-   * e.g., ["glob: *.md", "glob: *.ts", "read: file.md", "read: other.md"]
-   *    -> [{ name: "glob", detail: "*.md", count: 2 }, { name: "read", detail: "file.md", count: 2 }]
+   * e.g., [{name: "Glob", input: "*.md"}, {name: "Glob", input: "*.ts"}, {name: "Read", input: "file.md"}]
+   *    -> [{ name: "Glob", detail: "*.md", count: 2, completed: true }, { name: "Read", detail: "file.md", count: 1, completed: false }]
    * Preserves detail from first occurrence for display
    */
-  private collapsedToolHistory(): { name: string; detail?: string; count: number }[] {
-    const collapsed: { name: string; detail?: string; count: number }[] = [];
+  private collapsedToolHistory(): { name: string; detail?: string; count: number; completed: boolean }[] {
+    const collapsed: { name: string; detail?: string; count: number; completed: boolean }[] = [];
 
     for (const tool of this.toolHistory) {
-      const colonIdx = tool.indexOf(":");
-      const toolName = colonIdx > 0 ? tool.slice(0, colonIdx).trim() : tool;
-      const detail = colonIdx > 0 ? tool.slice(colonIdx + 1).trim() : undefined;
       const last = collapsed[collapsed.length - 1];
 
-      if (last && last.name === toolName) {
+      if (last && last.name === tool.name) {
         last.count++;
+        // Group is only completed if all tools in it are completed
+        last.completed = last.completed && tool.status === "completed";
       } else {
-        collapsed.push({ name: toolName, detail, count: 1 });
+        collapsed.push({
+          name: tool.name,
+          detail: tool.input,
+          count: 1,
+          completed: tool.status === "completed",
+        });
       }
     }
 
@@ -832,24 +883,30 @@ export class ChatView extends ItemView {
   private updateProgressDisplay(message: string, type: "tool" | "thinking" | "status") {
     if (!this.progressContainer) return;
 
-    this.progressContainer.empty();
+    // Remove existing progress elements (but keep thinking section)
+    const existingProgress = this.progressContainer.querySelector(".llm-progress");
+    existingProgress?.remove();
+    const existingHistory = this.progressContainer.querySelector(".llm-progress-history");
+    existingHistory?.remove();
 
     // Show collapsed tool history if we have any - each tool on its own line
     const collapsed = this.collapsedToolHistory();
     if (collapsed.length > 0) {
       const historyEl = this.progressContainer.createDiv({ cls: "llm-progress-history" });
 
-      // Show tools with checkmarks for completed ones, each on its own line
-      // All but the last are complete, last is current/in-progress
-      collapsed.forEach((item, i) => {
-        const isLast = i === collapsed.length - 1;
-        const toolLine = historyEl.createDiv({ cls: "llm-tool-history-item" });
+      // Show tools with status indicators
+      collapsed.forEach((item) => {
+        const toolLine = historyEl.createDiv({
+          cls: `llm-tool-history-item ${item.completed ? "llm-tool-item-complete" : "llm-tool-item-pending"}`,
+        });
 
-        // Add checkmark for completed items, spinner for in-progress
-        if (!isLast) {
+        // Add status indicator: checkmark for completed, spinner for in-progress
+        if (item.completed) {
           toolLine.createSpan({ text: "✓ ", cls: "llm-tool-complete" });
         } else {
-          toolLine.createSpan({ text: "› ", cls: "llm-tool-active" });
+          // Create animated spinner for pending
+          const spinner = toolLine.createSpan({ cls: "llm-tool-spinner" });
+          spinner.innerHTML = '<span class="llm-spinner"></span>';
         }
 
         if (item.count > 1) {
@@ -861,32 +918,22 @@ export class ChatView extends ItemView {
           this.createFileLink(toolLine, item.detail);
         } else if (item.detail) {
           toolLine.createSpan({ text: `${item.name}: `, cls: "llm-tool-name" });
-          toolLine.createSpan({ text: item.detail, cls: "llm-tool-detail" });
+          // Truncate long details
+          const displayDetail = item.detail.length > 50 ? item.detail.slice(0, 47) + "..." : item.detail;
+          toolLine.createSpan({ text: displayDetail, cls: "llm-tool-detail llm-tool-summary" });
         } else {
           toolLine.createSpan({ text: item.name, cls: "llm-tool-name" });
         }
       });
     }
 
-    // Show current status with details
-    const iconName = type === "tool" ? "wrench" : type === "thinking" ? "brain" : "loader";
-    const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
-    const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
-    setIcon(iconEl, iconName);
-
-    // Check if the message contains a file path (e.g., "Read: /path/to/file.ts")
-    const colonIdx = message.indexOf(":");
-    if (colonIdx > 0) {
-      const toolPart = message.slice(0, colonIdx + 1);
-      const detailPart = message.slice(colonIdx + 1).trim();
-      if (this.isFilePath(detailPart)) {
-        const textEl = progressEl.createSpan({ cls: "llm-progress-text" });
-        textEl.createSpan({ text: toolPart + " " });
-        this.createFileLink(textEl, detailPart);
-      } else {
-        progressEl.createSpan({ text: message, cls: "llm-progress-text" });
-      }
-    } else {
+    // Don't show separate current status for "tool" type - it's in the history
+    // Only show status bar for non-tool events
+    if (type !== "tool") {
+      const iconName = type === "thinking" ? "brain" : "loader";
+      const progressEl = this.progressContainer.createDiv({ cls: `llm-progress llm-progress-${type}` });
+      const iconEl = progressEl.createSpan({ cls: "llm-progress-icon" });
+      setIcon(iconEl, iconName);
       progressEl.createSpan({ text: message, cls: "llm-progress-text" });
     }
 
@@ -904,6 +951,8 @@ export class ChatView extends ItemView {
     this.currentToolUse = null;
     this.toolHistory = [];
     this.recentStatuses = [];
+    this.accumulatedThinking = "";
+    this.thinkingSectionEl = null;
   }
 
   private async buildContextPrompt(currentPrompt: string): Promise<string> {

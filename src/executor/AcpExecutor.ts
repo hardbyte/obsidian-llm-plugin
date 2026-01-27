@@ -145,6 +145,9 @@ export class AcpExecutor {
   private configOptions: SessionConfigOption[] = [];
   private modelState: SessionModelState | null = null;
   private accumulatedContent: string = ""; // Accumulate text content during prompt
+  private chunkCount: number = 0; // Track streaming chunks for periodic logging
+  private lastLogTime: number = 0; // Track last log time for rate limiting
+  private toolCallNames: Map<string, string> = new Map(); // Map tool call IDs to names
 
   constructor(settings: LLMPluginSettings) {
     this.settings = settings;
@@ -417,9 +420,15 @@ export class AcpExecutor {
 
   /**
    * Handle session update notifications and convert to ProgressEvents
+   * Logging is rate-limited to reduce verbosity while keeping important lifecycle events
    */
   private handleSessionUpdate(update: SessionUpdate) {
-    this.debug("handleSessionUpdate:", update.sessionUpdate, JSON.stringify(update).slice(0, 200));
+    // Log session update type (keep for debugging session state)
+    // Skip verbose content for streaming events
+    const verboseTypes = ["agent_message_chunk", "user_message_chunk", "agent_thought_chunk"];
+    if (!verboseTypes.includes(update.sessionUpdate)) {
+      this.debug("handleSessionUpdate:", update.sessionUpdate);
+    }
 
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
@@ -427,7 +436,6 @@ export class AcpExecutor {
         // ContentChunk has a single content block, not an array
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const chunk = update as any;
-        this.debug("Content chunk:", JSON.stringify(chunk));
 
         // Try to extract text content - different providers may have different structures
         let textToAdd = "";
@@ -456,15 +464,20 @@ export class AcpExecutor {
         if (textToAdd) {
           // Accumulate text content for the response (always, even without callback)
           this.accumulatedContent += textToAdd;
-          this.debug("Accumulated content length:", this.accumulatedContent.length);
+          this.chunkCount++;
+
+          // Log periodically instead of every chunk (every 50 chunks or every 5 seconds)
+          const now = Date.now();
+          if (this.chunkCount % 50 === 0 || now - this.lastLogTime > 5000) {
+            this.debug(`Streaming: ${this.chunkCount} chunks, ${this.accumulatedContent.length} chars`);
+            this.lastLogTime = now;
+          }
 
           // Notify progress callback if available
           this.progressCallback?.({
             type: "text",
             content: this.accumulatedContent, // Send cumulative content like CLI streaming
           });
-        } else {
-          this.debug("No text extracted from chunk");
         }
         break;
       }
@@ -485,13 +498,46 @@ export class AcpExecutor {
       case "tool_call": {
         if (!this.progressCallback) break;
         // ToolCall has title, status, locations (file paths), and more
-        const toolCall = update as ToolCall & { sessionUpdate: string };
+        // Extended type to include Claude Code metadata structure
+        const toolCall = update as ToolCall & {
+          sessionUpdate: string;
+          toolCallId?: string;
+          _meta?: { claudeCode?: { toolName?: string } };
+          rawInput?: Record<string, unknown>;
+        };
 
-        // Extract file path from locations if available (useful for file operations)
+        // Extract tool name - prefer claudeCode metadata, then title, then generic
+        let toolName = toolCall._meta?.claudeCode?.toolName
+          ?? toolCall.title
+          ?? "Tool";
+
+        // Extract meaningful input/summary from rawInput or locations
         let input: string | undefined;
-        if (toolCall.locations && toolCall.locations.length > 0) {
+
+        // Try rawInput first for search queries, file paths, etc.
+        if (toolCall.rawInput) {
+          // Common patterns: query (search), file_path (read), pattern (glob)
+          input = toolCall.rawInput.query as string
+            ?? toolCall.rawInput.file_path as string
+            ?? toolCall.rawInput.path as string
+            ?? toolCall.rawInput.pattern as string
+            ?? toolCall.rawInput.url as string;
+
+          // Truncate long inputs
+          if (input && input.length > 60) {
+            input = input.slice(0, 57) + "...";
+          }
+        }
+
+        // Fall back to locations for file operations
+        if (!input && toolCall.locations && toolCall.locations.length > 0) {
           const loc = toolCall.locations[0];
           input = loc.line ? `${loc.path}:${loc.line}` : loc.path;
+        }
+
+        // Store the tool name for later updates (tool_call_update only has ID)
+        if (toolCall.toolCallId) {
+          this.toolCallNames.set(toolCall.toolCallId, toolName);
         }
 
         // Map ACP status to our status type
@@ -504,7 +550,7 @@ export class AcpExecutor {
 
         this.progressCallback({
           type: "tool_use",
-          tool: toolCall.title ?? "unknown",
+          tool: toolName,
           input,
           status,
         });
@@ -514,7 +560,19 @@ export class AcpExecutor {
       case "tool_call_update": {
         if (!this.progressCallback) break;
         // Handle tool call status updates
-        const toolUpdate = update as { toolCallId: string; status?: string; locations?: Array<{ path: string; line?: number | null }> };
+        const toolUpdate = update as {
+          toolCallId: string;
+          status?: string;
+          locations?: Array<{ path: string; line?: number | null }>;
+          _meta?: { claudeCode?: { toolName?: string } };
+          title?: string;
+        };
+
+        // Get tool name from our cache, or from update metadata, or use generic
+        let toolName = this.toolCallNames.get(toolUpdate.toolCallId)
+          ?? toolUpdate._meta?.claudeCode?.toolName
+          ?? toolUpdate.title
+          ?? "Tool";
 
         // Extract file path from locations if available
         let input: string | undefined;
@@ -527,13 +585,16 @@ export class AcpExecutor {
         let status: "started" | "completed" | undefined;
         if (toolUpdate.status === "completed" || toolUpdate.status === "failed") {
           status = "completed";
+          // Clean up the cache when tool completes
+          this.toolCallNames.delete(toolUpdate.toolCallId);
         }
 
-        // Only emit if we have useful info to show
+        // Emit for completed tools with meaningful name
         if (status === "completed") {
           this.progressCallback({
             type: "tool_use",
-            tool: input ?? toolUpdate.toolCallId,
+            tool: toolName,
+            input,
             status,
           });
         }
@@ -557,8 +618,11 @@ export class AcpExecutor {
       throw new Error("Not connected to an ACP agent. Call connect() first.");
     }
 
-    // Reset accumulated content for this prompt
+    // Reset state for this prompt
     this.accumulatedContent = "";
+    this.chunkCount = 0;
+    this.lastLogTime = Date.now();
+    this.toolCallNames.clear();
 
     // Update progress callback if provided
     if (options?.onProgress) {
