@@ -6,6 +6,7 @@
  */
 
 import { spawn, ChildProcess } from "child_process";
+import { cliEnv, resolveCli } from "./resolveCli";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -235,14 +236,15 @@ export class AcpExecutor {
       this.debug("With environment overrides:", Object.keys(acpCommand.env));
     }
 
-    // Spawn the ACP agent process
-    // Use shell: true to ensure commands like npx are found via shell PATH
-    // Merge provider-specific env vars with process.env
-    this.process = spawn(acpCommand.cmd, acpCommand.args, {
+    // Spawn the ACP agent without a shell. Finder's PATH is only
+    // /usr/bin:/bin:/usr/sbin:/sbin, so npx installed by the uv installer
+    // (~/.local/bin) or Homebrew is resolved to an absolute path first.
+    const command = resolveCli(acpCommand.cmd);
+    this.process = spawn(command, acpCommand.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...acpCommand.env },
-      shell: true,
+      env: { ...cliEnv(process.env, acpCommand.cmd), ...acpCommand.env },
+      shell: false,
     });
 
     if (!this.process.stdin || !this.process.stdout) {
