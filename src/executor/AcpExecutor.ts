@@ -6,7 +6,7 @@
  */
 
 import { spawn, ChildProcess } from "child_process";
-import { cliEnv, resolveCli } from "./resolveCli";
+import { cliEnv, needsWindowsShell, resolveCli } from "./resolveCli";
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -236,15 +236,15 @@ export class AcpExecutor {
       this.debug("With environment overrides:", Object.keys(acpCommand.env));
     }
 
-    // Spawn the ACP agent without a shell. Finder's PATH is only
-    // /usr/bin:/bin:/usr/sbin:/sbin, so npx installed by the uv installer
-    // (~/.local/bin) or Homebrew is resolved to an absolute path first.
+    // Resolve outside the GUI PATH first (Finder on macOS, missing
+    // %APPDATA%\\npm on Windows). Use a shell only for Windows *.cmd/*.bat
+    // shims; Node rejects those with shell:false (EINVAL).
     const command = resolveCli(acpCommand.cmd);
     this.process = spawn(command, acpCommand.args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...cliEnv(process.env, acpCommand.cmd), ...acpCommand.env },
-      shell: false,
+      shell: needsWindowsShell(command),
     });
 
     if (!this.process.stdin || !this.process.stdout) {

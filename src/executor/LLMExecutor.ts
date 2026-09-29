@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
-import { cliEnv, resolveCli } from "./resolveCli";
+import { cliEnv, needsWindowsShell, resolveCli } from "./resolveCli";
 import type { LLMProvider, LLMResponse, ProviderConfig, LLMPluginSettings, ProgressEvent } from "../types";
 
 /**
@@ -403,13 +403,15 @@ export class LLMExecutor {
       this.debug("Prompt length:", prompt.length, "chars");
       this.debug("Allow file writes:", this.settings.allowFileWrites);
 
-      const child = spawn(resolveCli(cmd), args, {
+      const command = resolveCli(cmd);
+      const child = spawn(command, args, {
         cwd: cwd || undefined,
         env: {
           ...cliEnv(process.env, cmd),
           ...config.envVars,
         },
-        shell: false,
+        // Windows npm shims are *.cmd; shell:false raises EINVAL (issue #19).
+        shell: needsWindowsShell(command),
         stdio: useStdin ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
       });
 
@@ -1035,10 +1037,11 @@ export async function detectProvider(provider: LLMProvider): Promise<boolean> {
 
   return new Promise((resolve) => {
     const [cmd, ...args] = commands[provider];
-    const child = spawn(resolveCli(cmd), args, {
+    const command = resolveCli(cmd);
+    const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: cliEnv(process.env, cmd),
-      shell: false,
+      shell: needsWindowsShell(command),
     });
 
     child.on("error", () => resolve(false));

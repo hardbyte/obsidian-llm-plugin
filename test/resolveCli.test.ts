@@ -4,7 +4,11 @@ import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { cliEnv, resolveCli } from "../src/executor/resolveCli.ts";
+import {
+  cliEnv,
+  needsWindowsShell,
+  resolveCli,
+} from "../src/executor/resolveCli.ts";
 
 const GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
@@ -53,4 +57,43 @@ test("a missing Homebrew prefix does not throw", () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("Windows GUI PATH misses npm global; APPDATA\\npm finds codex.cmd", () => {
+  const home = mkdtempSync(join(tmpdir(), "obsidian-llm-win-"));
+  const appData = join(home, "AppData", "Roaming");
+  const npm = join(appData, "npm");
+  mkdirSync(npm, { recursive: true });
+  const extensionless = join(npm, "codex");
+  const shim = join(npm, "codex.cmd");
+  writeFileSync(extensionless, "#!/bin/sh\necho bare\n");
+  writeFileSync(shim, "@echo off\r\necho codex-ok\r\n");
+
+  try {
+    const env = {
+      PATH: "C:\\Windows\\System32",
+      USERPROFILE: home,
+      HOME: home,
+      APPDATA: appData,
+      PATHEXT: ".COM;.EXE;.BAT;.CMD",
+    };
+    // PATHEXT uses .CMD; Windows paths are case-insensitive.
+    assert.equal(resolveCli("codex", env, "win32").toLowerCase(), shim.toLowerCase());
+    assert.equal(needsWindowsShell(shim, "win32"), true);
+    assert.equal(needsWindowsShell(resolveCli("codex", env, "win32"), "win32"), true);
+    assert.ok(
+      (cliEnv(env, "codex", "win32").PATH || "").includes(npm),
+      "child PATH should prepend the npm global prefix",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("absolute Windows .cmd custom command needs a shell", () => {
+  const cmd = "C:\\Users\\lubo\\AppData\\Roaming\\npm\\codex.cmd";
+  assert.equal(needsWindowsShell(cmd, "win32"), true);
+  assert.equal(needsWindowsShell(cmd, "darwin"), false);
+  assert.equal(needsWindowsShell("/opt/homebrew/bin/npx", "darwin"), false);
+  assert.equal(needsWindowsShell("C:\\Program Files\\nodejs\\node.exe", "win32"), false);
 });

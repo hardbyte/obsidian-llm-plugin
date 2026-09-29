@@ -2,8 +2,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-function pathSeparator(): string {
-  return process.platform === "win32" ? ";" : ":";
+function pathSeparator(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? ";" : ":";
 }
 
 function homeDir(env: NodeJS.ProcessEnv): string {
@@ -11,18 +11,29 @@ function homeDir(env: NodeJS.ProcessEnv): string {
 }
 
 /**
- * Directories a Finder-launched macOS app does not inherit from the login shell.
- * Homebrew is one candidate. It is not required: uv, nvm, volta, and a user
- * prefix under ~/.local/bin are checked as well.
+ * Directories a GUI-launched Obsidian does not inherit from an interactive shell.
+ * macOS Finder keeps PATH at /usr/bin:/bin. Windows apps often miss the npm
+ * global prefix under %APPDATA%\\npm where codex.cmd lives.
  */
-export function extraCliDirs(env: NodeJS.ProcessEnv = process.env): string[] {
+export function extraCliDirs(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   const home = homeDir(env);
   const dirs: string[] = [];
 
-  if (process.platform === "darwin") {
+  if (platform === "darwin") {
     dirs.push("/opt/homebrew/bin", "/usr/local/bin");
-  } else if (process.platform === "linux") {
+  } else if (platform === "linux") {
     dirs.push("/usr/local/bin");
+  } else if (platform === "win32") {
+    const appData =
+      env.APPDATA || (home ? path.join(home, "AppData", "Roaming") : "");
+    const localAppData =
+      env.LOCALAPPDATA || (home ? path.join(home, "AppData", "Local") : "");
+    if (appData) dirs.push(path.join(appData, "npm"));
+    if (localAppData) dirs.push(path.join(localAppData, "npm"));
+    if (env.NVM_HOME) dirs.push(env.NVM_HOME);
   }
 
   if (home) {
@@ -47,7 +58,20 @@ export function extraCliDirs(env: NodeJS.ProcessEnv = process.env): string[] {
   return dirs;
 }
 
-function isExecutable(filePath: string): boolean {
+function isPresentFile(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isExecutable(filePath: string, platform: NodeJS.Platform): boolean {
+  if (!isPresentFile(filePath)) return false;
+  if (platform === "win32") {
+    // Windows has no POSIX X_OK. Candidate names are already filtered by PATHEXT.
+    return true;
+  }
   try {
     fs.accessSync(filePath, fs.constants.X_OK);
     return true;
@@ -57,23 +81,63 @@ function isExecutable(filePath: string): boolean {
 }
 
 /**
- * Resolve a CLI name to an absolute executable without invoking a shell.
- * A GUI PATH of /usr/bin:/bin misses npx, claude, and gemini installed outside
- * that prefix. The original command is returned when nothing on disk matches,
- * so spawn still reports a missing binary instead of guessing.
+ * On Windows, npm installs both an extensionless shim and `name.cmd`. Prefer
+ * PATHEXT matches so spawn can target the .cmd the shell would run.
  */
-export function resolveCli(command: string, env: NodeJS.ProcessEnv = process.env): string {
+function candidateFileNames(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): string[] {
+  if (platform !== "win32") return [command];
+  if (path.extname(command)) return [command];
+
+  const pathext = (env.PATHEXT || ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => (entry.startsWith(".") ? entry : `.${entry}`));
+
+  return [...pathext.map((ext) => command + ext), command];
+}
+
+/**
+ * Node's spawn with shell:false cannot launch Windows .cmd/.bat shims (EINVAL).
+ * Keep shell:false everywhere else, including absolute PE binaries and POSIX paths.
+ */
+export function needsWindowsShell(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform !== "win32" || !command) return false;
+  return /\.(cmd|bat)$/i.test(command);
+}
+
+/**
+ * Resolve a CLI name to an absolute executable without invoking a shell.
+ * A GUI PATH misses npx/claude/gemini/codex installed outside that prefix.
+ * The original command is returned when nothing on disk matches, so spawn
+ * still reports a missing binary instead of guessing.
+ */
+export function resolveCli(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
   if (!command || path.isAbsolute(command)) return command;
 
-  const sep = pathSeparator();
+  const sep = pathSeparator(platform);
   const pathDirs = (env.PATH || "").split(sep).filter(Boolean);
   const seen = new Set<string>();
+  const names = candidateFileNames(command, env, platform);
 
-  for (const dir of [...pathDirs, ...extraCliDirs(env)]) {
+  for (const dir of [...pathDirs, ...extraCliDirs(env, platform)]) {
     if (!dir || seen.has(dir)) continue;
     seen.add(dir);
-    const candidate = path.join(dir, command);
-    if (isExecutable(candidate)) return candidate;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (isExecutable(candidate, platform)) return candidate;
+    }
   }
 
   return command;
@@ -86,13 +150,14 @@ export function resolveCli(command: string, env: NodeJS.ProcessEnv = process.env
 export function cliEnv(
   env: NodeJS.ProcessEnv = process.env,
   command?: string,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
   if (!command) return env;
-  const resolved = resolveCli(command, env);
+  const resolved = resolveCli(command, env, platform);
   if (!path.isAbsolute(resolved)) return env;
 
   const dir = path.dirname(resolved);
-  const sep = pathSeparator();
+  const sep = pathSeparator(platform);
   const current = env.PATH || "";
   const dirs = current.split(sep).filter(Boolean);
   if (dirs.includes(dir)) return env;
